@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Virtual environments
+.venv
+venv
+env
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Development & Testing
+tests/
+notebooks/
+data/
+
+# Documentation
+README.md
+
+# IDE
+.vscode/
+.idea/
+
+# Cache and logs
+*.log
+.coverage
+pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

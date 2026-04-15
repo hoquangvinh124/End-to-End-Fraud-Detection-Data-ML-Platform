@@ -1,7 +1,15 @@
-import pytest
 from datetime import datetime
-from api.models import TransactionRequest, PredictionResponse, HealthResponse, ErrorResponse
+
+import pytest
 from pydantic import ValidationError
+
+from api.models import (
+    ErrorResponse,
+    HealthResponse,
+    PredictionResponse,
+    TransactionRequest,
+)
+
 
 class TestTransactionRequest:
     """Test suite for TransactionRequest model"""
@@ -77,11 +85,14 @@ class TestTransactionRequest:
 
         assert "greater than 0" in str(exc_info.value)
 
-    @pytest.mark.parametrize("risk_field", [
-        "TERMINAL_RISK_1DAY_WINDOW",
-        "TERMINAL_RISK_7DAY_WINDOW",
-        "TERMINAL_RISK_30DAY_WINDOW"
-    ])
+    @pytest.mark.parametrize(
+        "risk_field",
+        [
+            "TERMINAL_RISK_1DAY_WINDOW",
+            "TERMINAL_RISK_7DAY_WINDOW",
+            "TERMINAL_RISK_30DAY_WINDOW",
+        ],
+    )
     def test_invalid_risk_range(self, sample_valid_transaction, risk_field):
         """
         Test: ValidationError when terminal risk exceeds valid range
@@ -104,14 +115,17 @@ class TestTransactionRequest:
 
         assert "less than or equal to 1" in str(exc_info.value)
 
-    @pytest.mark.parametrize("count_field", [
-        "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D",
-        "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D",
-        "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D",
-        "TERMINAL_NB_TX_1DAY_WINDOW",
-        "TERMINAL_NB_TX_7DAY_WINDOW",
-        "TERMINAL_NB_TX_30DAY_WINDOW"
-    ])
+    @pytest.mark.parametrize(
+        "count_field",
+        [
+            "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D",
+            "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D",
+            "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D",
+            "TERMINAL_NB_TX_1DAY_WINDOW",
+            "TERMINAL_NB_TX_7DAY_WINDOW",
+            "TERMINAL_NB_TX_30DAY_WINDOW",
+        ],
+    )
     def test_negative_count(self, sample_valid_transaction, count_field):
         """
         Test: ValidationError when count values are negative
@@ -145,11 +159,7 @@ class TestTransactionRequest:
         When: TransactionRequest instance is created
         Then: Default values are set for optional fields
         """
-        minimal_data = {
-            "TX_AMOUNT": 100.0,
-            "IS_WEEKEND": False,
-            "IS_NIGHT": False
-        }
+        minimal_data = {"TX_AMOUNT": 100.0, "IS_WEEKEND": False, "IS_NIGHT": False}
 
         request = TransactionRequest(**minimal_data)
 
@@ -182,9 +192,7 @@ class TestPredictionResponse:
         Then: Instance is created successfully with correct values
         """
         response = PredictionResponse(
-            is_fraud=False,
-            fraud_probability=0.05,
-            model_version="test_model_v1"
+            is_fraud=False, fraud_probability=0.05, model_version="test_model_v1"
         )
 
         assert response.is_fraud is False
@@ -211,16 +219,14 @@ class TestPredictionResponse:
             PredictionResponse(
                 is_fraud=True,
                 fraud_probability=invalid_prob,
-                model_version="test_model"
+                model_version="test_model",
             )
 
-        assert "greater than or equal to 0" in str(exc_info.value) or \
-               "less than or equal to 1" in str(exc_info.value)
+        assert "greater than or equal to 0" in str(
+            exc_info.value
+        ) or "less than or equal to 1" in str(exc_info.value)
 
-    @pytest.mark.parametrize("is_fraud, prob", [
-        (True, 0.75),
-        (False, 0.25)
-    ])
+    @pytest.mark.parametrize("is_fraud, prob", [(True, 0.75), (False, 0.25)])
     def test_fraud_label_probability_consistency(self, is_fraud, prob):
         """
         Test: Fraud label and probability relationship
@@ -234,9 +240,7 @@ class TestPredictionResponse:
         Then: Both fields are correctly set
         """
         response = PredictionResponse(
-            is_fraud=is_fraud,
-            fraud_probability=prob,
-            model_version="test_model"
+            is_fraud=is_fraud, fraud_probability=prob, model_version="test_model"
         )
 
         assert response.is_fraud == is_fraud
@@ -257,9 +261,7 @@ class TestHealthResponse:
         Then: Instance is created successfully
         """
         response = HealthResponse(
-            status="healthy",
-            model_loaded=True,
-            model_version="model_v1"
+            status="healthy", model_loaded=True, model_version="model_v1"
         )
 
         assert response.status == "healthy"
@@ -278,9 +280,7 @@ class TestHealthResponse:
         Then: Status is correctly set to unhealthy
         """
         response = HealthResponse(
-            status="unhealthy",
-            model_loaded=False,
-            model_version="not_loaded"
+            status="unhealthy", model_loaded=False, model_version="not_loaded"
         )
 
         assert response.status == "unhealthy"
@@ -301,10 +301,7 @@ class TestErrorResponse:
         When: ErrorResponse instance is created
         Then: Instance is created successfully
         """
-        response = ErrorResponse(
-            error="Validation error",
-            detail="Invalid input data"
-        )
+        response = ErrorResponse(error="Validation error", detail="Invalid input data")
 
         assert response.error == "Validation error"
         assert response.detail == "Invalid input data"
@@ -320,9 +317,7 @@ class TestErrorResponse:
         When: ErrorResponse instance is created
         Then: Detail defaults to None
         """
-        response = ErrorResponse(
-            error="Server error"
-        )
+        response = ErrorResponse(error="Server error")
 
         assert response.error == "Server error"
         assert response.detail is None

@@ -1,12 +1,14 @@
-import pytest
 import numpy as np
+import pytest
 from fastapi import status
 
 
 class TestPredictEndpoint:
     """Test suite for /predict endpoint integration tests"""
 
-    def test_predict_success_non_fraud(self, client, sample_valid_transaction, mock_model):
+    def test_predict_success_non_fraud(
+        self, client, sample_valid_transaction, mock_model
+    ):
         """
         Test: Successful prediction for non-fraud transaction
 
@@ -61,7 +63,9 @@ class TestPredictEndpoint:
         assert data["fraud_probability"] == 0.7
         assert "model_version" in data
 
-    def test_predict_threshold_boundary(self, client, sample_valid_transaction, mock_model):
+    def test_predict_threshold_boundary(
+        self, client, sample_valid_transaction, mock_model
+    ):
         """
         Test: Prediction with fraud probability exactly 0.5
 
@@ -86,7 +90,9 @@ class TestPredictEndpoint:
         assert data["is_fraud"] is True
         assert data["fraud_probability"] == 0.5
 
-    def test_predict_just_below_threshold(self, client, sample_valid_transaction, mock_model):
+    def test_predict_just_below_threshold(
+        self, client, sample_valid_transaction, mock_model
+    ):
         """
         Test: Prediction with fraud probability just below 0.5
 
@@ -127,7 +133,7 @@ class TestPredictEndpoint:
         invalid_data = {
             "CUSTOMER_AVG_AMOUNT_WINDOW_1D": 120.0,
             "IS_WEEKEND": False,
-            "IS_NIGHT": False
+            "IS_NIGHT": False,
         }
 
         response = client.post("/predict", json=invalid_data)
@@ -209,13 +215,18 @@ class TestPredictEndpoint:
 
         assert "detail" in data
 
-    @pytest.mark.parametrize("invalid_case", [
-        "missing_required_field",
-        "negative_amount",
-        "invalid_risk_range",
-        "negative_count"
-    ])
-    def test_predict_all_validation_errors(self, client, sample_invalid_transactions, invalid_case):
+    @pytest.mark.parametrize(
+        "invalid_case",
+        [
+            "missing_required_field",
+            "negative_amount",
+            "invalid_risk_range",
+            "negative_count",
+        ],
+    )
+    def test_predict_all_validation_errors(
+        self, client, sample_invalid_transactions, invalid_case
+    ):
         """
         Test: All validation error cases
 
@@ -240,7 +251,9 @@ class TestPredictEndpoint:
 
         assert "detail" in data
 
-    def test_predict_response_structure(self, client, sample_valid_transaction, mock_model):
+    def test_predict_response_structure(
+        self, client, sample_valid_transaction, mock_model
+    ):
         """
         Test: Response structure matches expected schema
 
@@ -262,7 +275,12 @@ class TestPredictEndpoint:
         data = response.json()
 
         # Check required fields
-        required_fields = ["is_fraud", "fraud_probability", "timestamp", "model_version"]
+        required_fields = [
+            "is_fraud",
+            "fraud_probability",
+            "timestamp",
+            "model_version",
+        ]
         for field in required_fields:
             assert field in data, f"Missing field: {field}"
 
@@ -274,7 +292,9 @@ class TestPredictEndpoint:
         # Check probability range
         assert 0 <= data["fraud_probability"] <= 1
 
-    def test_predict_multiple_requests(self, client, sample_valid_transaction, mock_model):
+    def test_predict_multiple_requests(
+        self, client, sample_valid_transaction, mock_model
+    ):
         """
         Test: Multiple consecutive predictions
 
@@ -290,7 +310,9 @@ class TestPredictEndpoint:
         responses = []
 
         for i in range(3):
-            mock_model.predict_proba.return_value = np.array([[0.9 - i*0.1, 0.1 + i*0.1]])
+            mock_model.predict_proba.return_value = np.array(
+                [[0.9 - i * 0.1, 0.1 + i * 0.1]]
+            )
             response = client.post("/predict", json=sample_valid_transaction)
             responses.append(response.json())
 
@@ -315,11 +337,7 @@ class TestPredictEndpoint:
             - Response status is 200 OK
             - Prediction is successful
         """
-        minimal_data = {
-            "TX_AMOUNT": 100.0,
-            "IS_WEEKEND": False,
-            "IS_NIGHT": False
-        }
+        minimal_data = {"TX_AMOUNT": 100.0, "IS_WEEKEND": False, "IS_NIGHT": False}
 
         mock_model.predict_proba.return_value = np.array([[0.98, 0.02]])
 

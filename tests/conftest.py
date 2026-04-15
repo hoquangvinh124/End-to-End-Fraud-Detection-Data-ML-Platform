@@ -1,7 +1,9 @@
-from fastapi.testclient import TestClient
-from api.main import app
-import pytest
 import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+
+from api.main import app
+
 
 @pytest.fixture
 def client():
@@ -35,7 +37,7 @@ def mock_model(mocker):
     Returns:
         Mock: Mocked model object
     """
-    mock = mocker.patch('api.main.ml_model')
+    mock = mocker.patch("api.main.ml_model")
     mock.predict_proba.return_value = np.array([[0.95, 0.05]])
     mock.predict.return_value = np.array([0])
     return mock
@@ -67,7 +69,7 @@ def sample_valid_transaction():
         "TERMINAL_NB_TX_7DAY_WINDOW": 300.0,
         "TERMINAL_NB_TX_30DAY_WINDOW": 1200.0,
         "IS_WEEKEND": False,
-        "IS_NIGHT": False
+        "IS_NIGHT": False,
     }
 
 
@@ -86,11 +88,7 @@ def sample_high_risk_transaction(sample_valid_transaction):
         dict: High-risk transaction data
     """
     data = sample_valid_transaction.copy()
-    data.update({
-        "TX_AMOUNT": 5000.00,
-        "IS_WEEKEND": True,
-        "IS_NIGHT": True
-    })
+    data.update({"TX_AMOUNT": 5000.00, "IS_WEEKEND": True, "IS_NIGHT": True})
     return data
 
 
@@ -109,23 +107,23 @@ def sample_invalid_transactions():
         "missing_required_field": {
             "CUSTOMER_AVG_AMOUNT_WINDOW_1D": 120.0,
             "IS_WEEKEND": False,
-            "IS_NIGHT": False
+            "IS_NIGHT": False,
         },
         "negative_amount": {
             "TX_AMOUNT": -100.50,
             "IS_WEEKEND": False,
-            "IS_NIGHT": False
+            "IS_NIGHT": False,
         },
         "invalid_risk_range": {
             "TX_AMOUNT": 150.50,
             "TERMINAL_RISK_1DAY_WINDOW": 1.5,
             "IS_WEEKEND": False,
-            "IS_NIGHT": False
+            "IS_NIGHT": False,
         },
         "negative_count": {
             "TX_AMOUNT": 150.50,
             "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D": -5.0,
             "IS_WEEKEND": False,
-            "IS_NIGHT": False
-        }
+            "IS_NIGHT": False,
+        },
     }

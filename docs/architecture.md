@@ -8,7 +8,7 @@
 ## Finalized Architecture
 
 ### CI/CD
-- GitHub Actions CI: lint (Ruff on pi and 	ests) -> test (pytest with --cov=api --cov-fail-under=80)
+- GitHub Actions CI: lint (Ruff on `api` and `tests`) -> test (pytest with `--cov=api --cov-fail-under=80`)
 - Future CD target: build image -> push Artifact Registry
 - ArgoCD: GitOps deploy to GKE
 

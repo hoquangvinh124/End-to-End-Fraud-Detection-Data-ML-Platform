@@ -30,7 +30,7 @@ jobs:
         with:
           images: ghcr.io/hoquangvinh124/mlops
           tags: |
-            type=sha,format=short
+            type=raw,value={{sha}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=vinh-branch,enable=${{ github.ref == 'refs/heads/vinh-branch' }}
 

@@ -9,7 +9,7 @@
 
 ### CI/CD
 - GitHub Actions CI: lint (runs `uv run ruff check .`) -> test (runs `uv run pytest --cov=api --cov-report=term-missing --cov-fail-under=80`)
-- GitHub Actions Build: docker build + publish `ghcr.io/hoquangvinh124/mlops` on pushes to `vinh-branch` and `main`
+- GitHub Actions Build: after CI succeeds on `vinh-branch` or `main`, build and publish `ghcr.io/hoquangvinh124/mlops` with a bare short SHA tag plus `latest` on `main` or `vinh-branch` on `vinh-branch`
 - Future CD target: deployment flow remains separate from CI and image publishing
 - ArgoCD: GitOps deploy to GKE
 

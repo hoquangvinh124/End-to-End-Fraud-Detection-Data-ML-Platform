@@ -10,7 +10,7 @@ Add a separate GitHub Actions workflow at `.github/workflows/build.yml` dedicate
 
 The workflow will:
 
-- trigger only on pushes to `vinh-branch` and `main`
+- trigger from successful completion of the existing `CI` workflow for `vinh-branch` and `main`
 - build from `./dockerfile`
 - publish to `ghcr.io/hoquangvinh124/mlops`
 - use `docker/metadata-action` for tags and OCI labels
@@ -20,8 +20,9 @@ The workflow will:
 
 ### Triggers
 
-- `push` to `vinh-branch`
-- `push` to `main`
+- `workflow_run` for the `CI` workflow
+- limited to completed runs on `vinh-branch`
+- limited to completed runs on `main`
 
 No pull request trigger is included in this scope.
 
@@ -38,7 +39,7 @@ Use one job, for example `docker`, on `ubuntu-latest`.
 
 Suggested step flow:
 
-1. Check out the repository
+1. Check out the `workflow_run.head_sha` commit that the completed CI run validated
 2. Log in to GHCR with `docker/login-action` using `GITHUB_TOKEN`
 3. Generate image tags and labels with `docker/metadata-action`
 4. Build and push the image with `docker/build-push-action`
@@ -51,10 +52,10 @@ Image name:
 
 Tags:
 
-- on `main`: `latest` and the commit SHA tag
-- on `vinh-branch`: `vinh-branch` and the commit SHA tag
+- on `main`: `latest` and the short SHA tag
+- on `vinh-branch`: `vinh-branch` and the short SHA tag
 
-The SHA tag is included so every pushed image can be traced back to the exact commit that produced it.
+The short SHA tag is included so every pushed image can be traced back to the CI-validated commit that produced it.
 
 ## Build inputs and defaults
 
@@ -66,6 +67,7 @@ This design intentionally avoids adding multi-platform builds, image signing, SB
 
 ## Failure behavior
 
+- If the triggering CI run does not conclude successfully, the publish job does not run.
 - If checkout fails, the workflow fails.
 - If GHCR login fails, the workflow fails.
 - If Docker build fails, the workflow fails.

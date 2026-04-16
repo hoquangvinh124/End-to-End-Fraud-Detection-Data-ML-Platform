@@ -35,6 +35,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
+          context: git
           images: ghcr.io/hoquangvinh124/mlops
           tags: |
             type=raw,value={{sha}}

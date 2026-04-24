@@ -1,0 +1,23 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "plugin.name": "pgoutput",
+  "database.hostname": "postgres-oltp",
+  "database.port": "5432",
+  "database.user": "postgres",
+  "database.password": "postgres",
+  "database.dbname": "fraud_bank",
+  "topic.prefix": "cdc",
+  "publication.name": "dbz_transactions_publication",
+  "publication.autocreate.mode": "filtered",
+  "slot.name": "debezium_transactions",
+  "slot.drop.on.stop": "false",
+  "table.include.list": "banking.transactions",
+  "snapshot.mode": "initial",
+  "decimal.handling.mode": "string",
+  "time.precision.mode": "connect",
+  "tombstones.on.delete": "false",
+  "transforms": "route",
+  "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+  "transforms.route.regex": "cdc\\.banking\\.transactions",
+  "transforms.route.replacement": "cdc.transactions"
+}

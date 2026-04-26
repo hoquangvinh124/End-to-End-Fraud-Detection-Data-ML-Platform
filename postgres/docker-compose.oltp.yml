@@ -25,7 +25,7 @@ services:
       retries: 5
     volumes:
       - postgres_oltp_data:/var/lib/postgresql/data
-      - ./postgres/oltp/init:/docker-entrypoint-initdb.d:ro
+      - ./oltp/init:/docker-entrypoint-initdb.d:ro
 
 volumes:
   postgres_oltp_data:

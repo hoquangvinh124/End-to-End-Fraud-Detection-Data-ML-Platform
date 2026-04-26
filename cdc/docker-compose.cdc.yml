@@ -77,8 +77,8 @@ services:
     container_name: fraud-cdc-connector-init
     entrypoint: ["/bin/sh", "/scripts/register-transactions-connector.sh"]
     volumes:
-      - ./src/scripts/cdc:/scripts:ro
-      - ./src/scripts/cdc/transactions-connector.json:/config/transactions-connector.json:ro
+      - ./:/scripts:ro
+      - ./transactions-connector.json:/config/transactions-connector.json:ro
     environment:
       CONNECT_URL: http://kafka-connect:8083
       CONNECTOR_NAME: transactions-cdc-connector

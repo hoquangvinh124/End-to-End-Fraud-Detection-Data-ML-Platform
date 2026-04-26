@@ -19,6 +19,10 @@ src/tests/
 src/scripts/
 src/monitoring/
 
+# Infrastructure (not needed in API image)
+cdc/
+postgres/
+
 # Notebooks and data
 notebooks/
 data/

@@ -17,10 +17,10 @@ __pycache__
 # Development & Testing
 src/tests/
 src/scripts/
+src/cdc/
 src/monitoring/
 
 # Infrastructure (not needed in API image)
-cdc/
 postgres/
 
 # Notebooks and data

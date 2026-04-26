@@ -4,10 +4,10 @@
 #
 # To start sub-stacks individually:
 #   OLTP only:          docker compose -f postgres/docker-compose.oltp.yml up -d
-#   CDC only:           docker compose -f postgres/docker-compose.oltp.yml -f cdc/docker-compose.cdc.yml up -d
+#   CDC only:           docker compose -f postgres/docker-compose.oltp.yml -f src/cdc/docker-compose.cdc.yml up -d
 #   Observability only: docker compose -f src/monitoring/docker-compose.observability.yml up -d
 
 include:
   - postgres/docker-compose.oltp.yml
-  - cdc/docker-compose.cdc.yml
+  - src/cdc/docker-compose.cdc.yml
   - src/monitoring/docker-compose.observability.yml

@@ -35,8 +35,6 @@ COPY --chown=user:user models/ ./models/
 
 USER user
 
-LABEL maintainer="hoquangvinh124@gmail.com"
-
 EXPOSE 8000
 
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["opentelemetry-instrument", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

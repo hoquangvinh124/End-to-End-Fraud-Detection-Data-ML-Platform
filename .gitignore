@@ -33,4 +33,4 @@ docs/superpowers/
 .vscode/
 .claude/
 .github/hooks/
-
+.github/*.md

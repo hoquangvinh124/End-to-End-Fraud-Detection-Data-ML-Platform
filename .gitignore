@@ -13,8 +13,8 @@ wheels/
 .claude/settings.local.json
 
 # Observability local data
-monitoring/grafana/data/
-monitoring/prometheus/data/
+src/monitoring/grafana/data/
+src/monitoring/prometheus/data/
 
 .superpowers/
 .worktrees/

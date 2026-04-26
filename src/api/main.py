@@ -50,8 +50,8 @@ def load_model():
     global ml_model, model_version
 
     try:
-        # Find the latest model in ../models directory
-        models_dir = Path(__file__).parent.parent / "models"
+        # Find the latest model in the repo root models directory
+        models_dir = Path(__file__).parent.parent.parent / "models"
 
         if not models_dir.exists():
             raise FileNotFoundError(f"Models directory not found: {models_dir}")

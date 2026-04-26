@@ -23,3 +23,14 @@ src/monitoring/prometheus/data/
 .env.*
 env.*
 !.env.example
+
+.coverage
+.coverage.*
+htmlcov/
+
+docs/superpowers/
+
+.vscode/
+.claude/
+.github/hooks/
+

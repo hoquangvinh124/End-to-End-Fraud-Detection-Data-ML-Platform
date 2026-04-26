@@ -30,7 +30,7 @@ COPY --from=builder --chown=user:user /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-COPY --chown=user:user api/ ./api/
+COPY --chown=user:user src/api/ ./api/
 COPY --chown=user:user models/ ./models/
 
 USER user

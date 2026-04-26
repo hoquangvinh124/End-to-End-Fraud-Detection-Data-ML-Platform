@@ -1,8 +1,8 @@
 services:
   fraud-detection-api:
     build:
-      context: .
-      dockerfile: dockerfile
+      context: ../..
+      dockerfile: ../api/dockerfile
     container_name: fraud-detection-api
     ports:
       - "8000:8000"
@@ -33,7 +33,7 @@ services:
       - "4317:4317"
       - "4318:4318"
     volumes:
-      - ./monitoring/otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./otel/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
     depends_on:
       jaeger:
         condition: service_started
@@ -55,7 +55,7 @@ services:
     ports:
       - "3100:3100"
     volumes:
-      - ./monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      - ./loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - loki_data:/loki
 
   prometheus:
@@ -64,7 +64,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -81,7 +81,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
     volumes:
       - grafana_data:/var/lib/grafana
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       prometheus:
         condition: service_started

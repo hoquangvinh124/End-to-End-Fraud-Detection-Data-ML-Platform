@@ -15,12 +15,21 @@ __pycache__
 .Python
 
 # Development & Testing
-tests/
+src/tests/
+src/scripts/
+src/cdc/
+src/monitoring/
+
+# Infrastructure (not needed in API image)
+postgres/
+
+# Notebooks and data
 notebooks/
 data/
 
 # Documentation
 README.md
+docs/
 
 # IDE
 .vscode/
@@ -34,3 +43,6 @@ pytest_cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Worktrees
+.worktrees/

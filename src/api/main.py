@@ -1,4 +1,5 @@
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -50,8 +51,8 @@ def load_model():
     global ml_model, model_version
 
     try:
-        # Find the latest model in ../models directory
-        models_dir = Path(__file__).parent.parent / "models"
+        # Resolve models dir: MODELS_DIR env var (CI/container) or CWD-relative fallback
+        models_dir = Path(os.environ.get("MODELS_DIR", "models"))
 
         if not models_dir.exists():
             raise FileNotFoundError(f"Models directory not found: {models_dir}")

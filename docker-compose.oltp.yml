@@ -13,9 +13,9 @@ services:
         "max_wal_senders=4",
       ]
     environment:
-      POSTGRES_DB: fraud_bank
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ${DB_NAME:-fraud_bank}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     ports:
       - "5433:5432"
     healthcheck:

@@ -18,7 +18,11 @@ Kafka topic.
 ## Prerequisites
 
 1. **Docker Desktop** running (Engine ≥ 20.10).
-2. **Seed data loaded** — the OLTP database must be initialised with the banking schema and
+2. **Copy `.env.example` to `.env`** and adjust values if needed (defaults work for local dev):
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+3. **Seed data loaded** — the OLTP database must be initialised with the banking schema and
    transaction rows before starting the CDC stack.  Follow the steps in
    [`docs/architecture.md`](architecture.md) or run the seed script directly:
    ```powershell

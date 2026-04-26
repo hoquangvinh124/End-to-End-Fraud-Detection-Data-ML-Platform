@@ -11,3 +11,5 @@ wheels/
 
 .worktrees/
 
+# Local environment overrides (never commit secrets)
+.env

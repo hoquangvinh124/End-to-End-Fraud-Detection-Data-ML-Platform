@@ -83,6 +83,11 @@ services:
       CONNECT_URL: http://kafka-connect:8083
       CONNECTOR_NAME: transactions-cdc-connector
       CONFIG_PATH: /config/transactions-connector.json
+      DB_HOST: ${DB_HOST:-postgres-oltp}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-fraud_bank}
     depends_on:
       kafka-connect:
         condition: service_healthy

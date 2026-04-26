@@ -10,4 +10,4 @@
 include:
   - docker-compose.oltp.yml
   - docker-compose.cdc.yml
-  - observability/docker-compose.observability.yml
+  - src/monitoring/docker-compose.observability.yml

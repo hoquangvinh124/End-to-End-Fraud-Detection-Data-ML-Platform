@@ -1,0 +1,13 @@
+# Master compose — includes all sub-stacks.
+# Run: docker compose up -d
+# Stop: docker compose down
+#
+# To start sub-stacks individually:
+#   OLTP only:          docker compose -f docker-compose.oltp.yml up -d
+#   CDC only:           docker compose -f docker-compose.oltp.yml -f docker-compose.cdc.yml up -d
+#   Observability only: docker compose -f observability/docker-compose.observability.yml up -d
+
+include:
+  - docker-compose.oltp.yml
+  - docker-compose.cdc.yml
+  - observability/docker-compose.observability.yml

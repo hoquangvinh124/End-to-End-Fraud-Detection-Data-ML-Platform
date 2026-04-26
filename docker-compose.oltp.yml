@@ -1,0 +1,21 @@
+services:
+  postgres-oltp:
+    image: postgres:16
+    container_name: fraud-oltp-postgres
+    environment:
+      POSTGRES_DB: fraud_bank
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fraud_bank"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_oltp_data:/var/lib/postgresql/data
+      - ./postgres/oltp/init:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  postgres_oltp_data:

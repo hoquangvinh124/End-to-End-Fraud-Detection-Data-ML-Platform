@@ -1,0 +1,23 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "plugin.name": "pgoutput",
+  "database.hostname": "${DB_HOST}",
+  "database.port": "${DB_PORT}",
+  "database.user": "${DB_USER}",
+  "database.password": "${DB_PASSWORD}",
+  "database.dbname": "${DB_NAME}",
+  "topic.prefix": "cdc",
+  "publication.name": "dbz_transactions_publication",
+  "publication.autocreate.mode": "filtered",
+  "slot.name": "debezium_transactions",
+  "slot.drop.on.stop": "false",
+  "table.include.list": "banking.transactions",
+  "snapshot.mode": "initial",
+  "decimal.handling.mode": "string",
+  "time.precision.mode": "connect",
+  "tombstones.on.delete": "false",
+  "transforms": "route",
+  "transforms.route.type": "org.apache.kafka.connect.transforms.RegexRouter",
+  "transforms.route.regex": "cdc\\.banking\\.transactions",
+  "transforms.route.replacement": "cdc.transactions"
+}

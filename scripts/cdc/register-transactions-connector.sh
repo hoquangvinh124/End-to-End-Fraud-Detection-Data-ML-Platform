@@ -16,18 +16,17 @@ until curl -fsS "$CONNECT_URL/connectors" >/dev/null; do
   sleep 5
 done
 
-CONNECTOR_JSON=$(sed \
+sed \
   -e "s|\${DB_HOST}|${DB_HOST}|g" \
   -e "s|\${DB_PORT}|${DB_PORT}|g" \
   -e "s|\${DB_USER}|${DB_USER}|g" \
   -e "s|\${DB_PASSWORD}|${DB_PASSWORD}|g" \
   -e "s|\${DB_NAME}|${DB_NAME}|g" \
-  "$CONFIG_PATH")
-
-curl -fsS \
+  "$CONFIG_PATH" \
+| curl -fsS \
   -X PUT \
   -H "Content-Type: application/json" \
-  --data "$CONNECTOR_JSON" \
+  --data @- \
   "$CONNECT_URL/connectors/$CONNECTOR_NAME/config"
 
 curl -fsS "$CONNECT_URL/connectors/$CONNECTOR_NAME/status"

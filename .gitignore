@@ -19,3 +19,7 @@ monitoring/prometheus/data/
 .superpowers/
 .worktrees/
 
+.env
+.env.*
+env.*
+!.env.example

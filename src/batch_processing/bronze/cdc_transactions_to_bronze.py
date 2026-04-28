@@ -3,32 +3,54 @@
 Reads Debezium envelope messages from the ``cdc.transactions`` Kafka topic,
 lightly unwraps the payload, adds CDC metadata columns, and writes plain
 Parquet files to the MinIO bronze bucket on a configurable micro-batch trigger.
+
+All configuration is sourced from environment variables so the job can be
+launched directly with ``python cdc_transactions_to_bronze.py`` — no
+shell wrapper or external conf file needed.
 """
 from __future__ import annotations
 
-import argparse
+import os
 
+from pyspark import SparkConf
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
+# ---------------------------------------------------------------------------
+# Config from environment
+# ---------------------------------------------------------------------------
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Transactions CDC -> Bronze Delta")
-    parser.add_argument("--topic", required=True, help="Kafka topic")
-    parser.add_argument("--bootstrap-servers", required=True, help="Kafka bootstrap")
-    parser.add_argument(
-        "--output-path", required=True, help="Delta table path (s3a://...)"
-    )
-    parser.add_argument("--checkpoint-path", required=True, help="Checkpoint path")
-    parser.add_argument(
-        "--trigger-interval", default="5 minutes", help="Micro-batch interval"
-    )
-    return parser.parse_args()
+TOPIC = os.environ.get("BRONZE_TOPIC", "cdc.transactions")
+BOOTSTRAP_SERVERS = os.environ.get("BRONZE_BOOTSTRAP_SERVERS", "kafka:9092")
+OUTPUT_PATH = os.environ.get("BRONZE_OUTPUT_PATH", "s3a://bronze/cdc/transactions")
+CHECKPOINT_PATH = os.environ.get(
+    "BRONZE_CHECKPOINT_PATH",
+    "s3a://bronze/_checkpoints/cdc_transactions_bronze",
+)
+TRIGGER_INTERVAL = os.environ.get("BRONZE_TRIGGER_INTERVAL", "5 minutes")
+
+_MINIO_ENDPOINT = os.environ.get("BRONZE_MINIO_ENDPOINT", "http://minio:9000")
+_MINIO_ACCESS_KEY = os.environ.get("BRONZE_MINIO_ACCESS_KEY", "minio")
+_MINIO_SECRET_KEY = os.environ.get("BRONZE_MINIO_SECRET_KEY", "minio12345")
 
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName("transactions-bronze-stream").getOrCreate()
+    conf = (
+        SparkConf()
+        .setAppName("cdc-transactions-to-bronze")
+        .setMaster("local[*]")
+        .set("spark.hadoop.fs.s3a.endpoint", _MINIO_ENDPOINT)
+        .set("spark.hadoop.fs.s3a.access.key", _MINIO_ACCESS_KEY)
+        .set("spark.hadoop.fs.s3a.secret.key", _MINIO_SECRET_KEY)
+        .set("spark.hadoop.fs.s3a.path.style.access", "true")
+        .set("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
+        .set(
+            "spark.hadoop.fs.s3a.aws.credentials.provider",
+            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
+        )
+    )
+    return SparkSession.builder.config(conf=conf).getOrCreate()
 
 
 # ---------------------------------------------------------------------------
@@ -89,9 +111,9 @@ def build_bronze_rows(raw_df):
     )
 
     # For deletes the relevant payload is ``before``; for all others use ``after``.
-    payload = F.when(F.col("event.op") == F.lit("d"), F.col("event.before")).otherwise(
-        F.col("event.after")
-    )
+    payload = F.when(
+        F.col("event.op") == F.lit("d"), F.col("event.before")
+    ).otherwise(F.col("event.after"))
 
     return event_df.select(
         payload.transaction_id.alias("transaction_id"),
@@ -130,13 +152,12 @@ def build_bronze_rows(raw_df):
 
 
 def main() -> None:
-    args = parse_args()
     spark = build_spark_session()
 
     kafka_df = (
         spark.readStream.format("kafka")
-        .option("kafka.bootstrap.servers", args.bootstrap_servers)
-        .option("subscribe", args.topic)
+        .option("kafka.bootstrap.servers", BOOTSTRAP_SERVERS)
+        .option("subscribe", TOPIC)
         .option("startingOffsets", "earliest")
         .load()
     )
@@ -146,9 +167,9 @@ def main() -> None:
     query = (
         bronze_df.writeStream.format("parquet")
         .outputMode("append")
-        .option("checkpointLocation", args.checkpoint_path)
-        .trigger(processingTime=args.trigger_interval)
-        .start(args.output_path)
+        .option("checkpointLocation", CHECKPOINT_PATH)
+        .trigger(processingTime=TRIGGER_INTERVAL)
+        .start(OUTPUT_PATH)
     )
 
     query.awaitTermination()

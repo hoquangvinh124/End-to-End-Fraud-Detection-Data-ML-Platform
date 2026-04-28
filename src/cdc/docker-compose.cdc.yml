@@ -98,7 +98,7 @@ services:
       context: ../batch_processing/bronze
       dockerfile: Dockerfile
     container_name: fraud-bronze-spark
-    entrypoint: ["/bin/sh", "/opt/bronze/entrypoint.sh"]
+    entrypoint: ["python", "/opt/bronze/cdc_transactions_to_bronze.py"]
     environment:
       BRONZE_TOPIC: cdc.transactions
       BRONZE_BOOTSTRAP_SERVERS: kafka:9092

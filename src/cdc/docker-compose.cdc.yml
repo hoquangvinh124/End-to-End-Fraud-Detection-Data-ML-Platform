@@ -94,7 +94,9 @@ services:
     restart: "no"
 
   spark-bronze-stream:
-    image: bitnami/spark:3.5.1
+    build:
+      context: ../batch_processing/bronze
+      dockerfile: Dockerfile
     container_name: fraud-bronze-spark
     entrypoint: ["/bin/sh", "/opt/bronze/start-transactions-bronze-stream.sh"]
     environment:

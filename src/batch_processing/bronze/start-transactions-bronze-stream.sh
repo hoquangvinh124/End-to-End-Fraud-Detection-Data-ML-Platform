@@ -17,7 +17,6 @@ MINIO_SECRET_KEY="${BRONZE_MINIO_SECRET_KEY:-minio12345}"
 
 exec "$SPARK_HOME/bin/spark-submit" \
   --master "local[*]" \
-  --packages "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4" \
   --conf "spark.hadoop.fs.s3a.endpoint=${MINIO_ENDPOINT}" \
   --conf "spark.hadoop.fs.s3a.access.key=${MINIO_ACCESS_KEY}" \
   --conf "spark.hadoop.fs.s3a.secret.key=${MINIO_SECRET_KEY}" \

@@ -99,15 +99,6 @@ services:
       dockerfile: Dockerfile
     container_name: fraud-bronze-spark
     entrypoint: ["python", "/opt/bronze/cdc_transactions_to_bronze.py"]
-    environment:
-      BRONZE_TOPIC: cdc.transactions
-      BRONZE_BOOTSTRAP_SERVERS: kafka:9092
-      BRONZE_OUTPUT_PATH: s3a://bronze/cdc/transactions
-      BRONZE_CHECKPOINT_PATH: s3a://bronze/_checkpoints/cdc_transactions_bronze
-      BRONZE_TRIGGER_INTERVAL: ${BRONZE_TRIGGER_INTERVAL:-5 minutes}
-      BRONZE_MINIO_ENDPOINT: ${BRONZE_MINIO_ENDPOINT:-http://minio:9000}
-      BRONZE_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
-      BRONZE_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio12345}
     volumes:
       - ../batch_processing/bronze:/opt/bronze:ro
     depends_on:

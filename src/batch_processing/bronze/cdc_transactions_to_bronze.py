@@ -4,53 +4,20 @@ Reads Debezium envelope messages from the ``cdc.transactions`` Kafka topic,
 lightly unwraps the payload, adds CDC metadata columns, and writes plain
 Parquet files to the MinIO bronze bucket on a configurable micro-batch trigger.
 
-All configuration is sourced from environment variables so the job can be
-launched directly with ``python cdc_transactions_to_bronze.py`` — no
-shell wrapper or external conf file needed.
+All configuration is loaded from spark-defaults.conf (baked into the image at
+$SPARK_HOME/conf/spark-defaults.conf). Job parameters live under the
+``spark.bronze.*`` namespace — change the conf file to tune the job.
 """
 from __future__ import annotations
 
-import os
-
-from pyspark import SparkConf
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-# ---------------------------------------------------------------------------
-# Config from environment
-# ---------------------------------------------------------------------------
-
-TOPIC = os.environ.get("BRONZE_TOPIC", "cdc.transactions")
-BOOTSTRAP_SERVERS = os.environ.get("BRONZE_BOOTSTRAP_SERVERS", "kafka:9092")
-OUTPUT_PATH = os.environ.get("BRONZE_OUTPUT_PATH", "s3a://bronze/cdc/transactions")
-CHECKPOINT_PATH = os.environ.get(
-    "BRONZE_CHECKPOINT_PATH",
-    "s3a://bronze/_checkpoints/cdc_transactions_bronze",
-)
-TRIGGER_INTERVAL = os.environ.get("BRONZE_TRIGGER_INTERVAL", "5 minutes")
-
-_MINIO_ENDPOINT = os.environ.get("BRONZE_MINIO_ENDPOINT", "http://minio:9000")
-_MINIO_ACCESS_KEY = os.environ.get("BRONZE_MINIO_ACCESS_KEY", "minio")
-_MINIO_SECRET_KEY = os.environ.get("BRONZE_MINIO_SECRET_KEY", "minio12345")
-
 
 def build_spark_session() -> SparkSession:
-    conf = (
-        SparkConf()
-        .setAppName("cdc-transactions-to-bronze")
-        .setMaster("local[*]")
-        .set("spark.hadoop.fs.s3a.endpoint", _MINIO_ENDPOINT)
-        .set("spark.hadoop.fs.s3a.access.key", _MINIO_ACCESS_KEY)
-        .set("spark.hadoop.fs.s3a.secret.key", _MINIO_SECRET_KEY)
-        .set("spark.hadoop.fs.s3a.path.style.access", "true")
-        .set("spark.hadoop.fs.s3a.connection.ssl.enabled", "false")
-        .set(
-            "spark.hadoop.fs.s3a.aws.credentials.provider",
-            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider",
-        )
-    )
-    return SparkSession.builder.config(conf=conf).getOrCreate()
+    # Spark auto-loads $SPARK_HOME/conf/spark-defaults.conf — no manual config needed.
+    return SparkSession.builder.appName("cdc-transactions-to-bronze").getOrCreate()
 
 
 # ---------------------------------------------------------------------------
@@ -154,10 +121,16 @@ def build_bronze_rows(raw_df):
 def main() -> None:
     spark = build_spark_session()
 
+    topic = spark.conf.get("spark.bronze.topic")
+    bootstrap_servers = spark.conf.get("spark.bronze.bootstrap.servers")
+    output_path = spark.conf.get("spark.bronze.output.path")
+    checkpoint_path = spark.conf.get("spark.bronze.checkpoint.path")
+    trigger_interval = spark.conf.get("spark.bronze.trigger.interval")
+
     kafka_df = (
         spark.readStream.format("kafka")
-        .option("kafka.bootstrap.servers", BOOTSTRAP_SERVERS)
-        .option("subscribe", TOPIC)
+        .option("kafka.bootstrap.servers", bootstrap_servers)
+        .option("subscribe", topic)
         .option("startingOffsets", "earliest")
         .load()
     )
@@ -167,9 +140,9 @@ def main() -> None:
     query = (
         bronze_df.writeStream.format("parquet")
         .outputMode("append")
-        .option("checkpointLocation", CHECKPOINT_PATH)
-        .trigger(processingTime=TRIGGER_INTERVAL)
-        .start(OUTPUT_PATH)
+        .option("checkpointLocation", checkpoint_path)
+        .trigger(processingTime=trigger_interval)
+        .start(output_path)
     )
 
     query.awaitTermination()

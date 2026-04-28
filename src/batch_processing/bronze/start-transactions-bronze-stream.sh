@@ -17,9 +17,7 @@ MINIO_SECRET_KEY="${BRONZE_MINIO_SECRET_KEY:-minio12345}"
 
 exec "$SPARK_HOME/bin/spark-submit" \
   --master "local[*]" \
-  --packages "io.delta:delta-spark_2.12:3.2.0,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4" \
-  --conf "spark.sql.extensions=io.delta.sql.DeltaSparkSessionExtension" \
-  --conf "spark.sql.catalog.spark_catalog=org.apache.spark.sql.delta.catalog.DeltaCatalog" \
+  --packages "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.apache.hadoop:hadoop-aws:3.3.4" \
   --conf "spark.hadoop.fs.s3a.endpoint=${MINIO_ENDPOINT}" \
   --conf "spark.hadoop.fs.s3a.access.key=${MINIO_ACCESS_KEY}" \
   --conf "spark.hadoop.fs.s3a.secret.key=${MINIO_SECRET_KEY}" \

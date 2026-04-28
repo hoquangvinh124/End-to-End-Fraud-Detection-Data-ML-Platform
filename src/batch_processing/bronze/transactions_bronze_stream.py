@@ -1,8 +1,8 @@
-"""Spark Structured Streaming job: Kafka CDC -> Delta Lake Bronze (MinIO).
+"""Spark Structured Streaming job: Kafka CDC -> Parquet Bronze (MinIO).
 
 Reads Debezium envelope messages from the ``cdc.transactions`` Kafka topic,
-lightly unwraps the payload, adds CDC metadata columns, and writes an
-append-only Delta table to the MinIO bronze bucket on a configurable trigger.
+lightly unwraps the payload, adds CDC metadata columns, and writes plain
+Parquet files to the MinIO bronze bucket on a configurable micro-batch trigger.
 """
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def main() -> None:
     bronze_df = build_bronze_rows(kafka_df)
 
     query = (
-        bronze_df.writeStream.format("delta")
+        bronze_df.writeStream.format("parquet")
         .outputMode("append")
         .option("checkpointLocation", args.checkpoint_path)
         .trigger(processingTime=args.trigger_interval)

@@ -93,5 +93,27 @@ services:
         condition: service_healthy
     restart: "no"
 
+  spark-bronze-stream:
+    image: bitnami/spark:3.5.1
+    container_name: fraud-bronze-spark
+    entrypoint: ["/bin/sh", "/opt/bronze/start-transactions-bronze-stream.sh"]
+    environment:
+      BRONZE_TOPIC: cdc.transactions
+      BRONZE_BOOTSTRAP_SERVERS: kafka:9092
+      BRONZE_OUTPUT_PATH: s3a://bronze/cdc/transactions
+      BRONZE_CHECKPOINT_PATH: s3a://bronze/_checkpoints/cdc_transactions_bronze
+      BRONZE_TRIGGER_INTERVAL: ${BRONZE_TRIGGER_INTERVAL:-5 minutes}
+      BRONZE_MINIO_ENDPOINT: ${BRONZE_MINIO_ENDPOINT:-http://minio:9000}
+      BRONZE_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
+      BRONZE_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio12345}
+    volumes:
+      - ../scripts/bronze:/opt/bronze:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      connector-init:
+        condition: service_completed_successfully
+    restart: on-failure
+
 volumes:
   kafka_data:

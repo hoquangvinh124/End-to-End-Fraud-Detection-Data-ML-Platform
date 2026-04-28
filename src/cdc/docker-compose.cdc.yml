@@ -1,4 +1,22 @@
 services:
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    container_name: fraud-cdc-schema-registry
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/subjects >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
   kafka:
     image: apache/kafka:3.8.0
     container_name: fraud-cdc-kafka
@@ -32,7 +50,9 @@ services:
       - kafka_data:/var/lib/kafka/data
 
   kafka-connect:
-    image: quay.io/debezium/connect:3.0
+    build:
+      context: .
+      dockerfile: Dockerfile.connect
     container_name: fraud-cdc-connect
     ports:
       - "8083:8083"
@@ -47,6 +67,8 @@ services:
       STATUS_STORAGE_REPLICATION_FACTOR: "1"
     depends_on:
       kafka:
+        condition: service_healthy
+      schema-registry:
         condition: service_healthy
       postgres-oltp:
         condition: service_healthy
@@ -64,6 +86,7 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium-connect
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
     depends_on:

@@ -107,7 +107,7 @@ services:
       BRONZE_MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
       BRONZE_MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio12345}
     volumes:
-      - ../scripts/bronze:/opt/bronze:ro
+      - ../batch_processing/bronze:/opt/bronze:ro
     depends_on:
       kafka:
         condition: service_healthy

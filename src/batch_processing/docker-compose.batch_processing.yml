@@ -1,0 +1,15 @@
+services:
+  spark-bronze-stream:
+    build:
+      context: bronze
+      dockerfile: Dockerfile
+    container_name: fraud-bronze-spark
+    entrypoint: ["python", "/opt/bronze/cdc_transactions_to_bronze.py"]
+    volumes:
+      - ./bronze:/opt/bronze:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      connector-init:
+        condition: service_completed_successfully
+    restart: on-failure

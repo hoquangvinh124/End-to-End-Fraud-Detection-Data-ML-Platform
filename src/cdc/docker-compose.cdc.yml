@@ -1,7 +1,7 @@
 services:
   schema-registry:
     image: confluentinc/cp-schema-registry:7.6.0
-    container_name: fraud-cdc-schema-registry
+    container_name: cdc-schema-registry
     ports:
       - "8081:8081"
     environment:
@@ -115,21 +115,6 @@ services:
       kafka-connect:
         condition: service_healthy
     restart: "no"
-
-  spark-bronze-stream:
-    build:
-      context: ../batch_processing/bronze
-      dockerfile: Dockerfile
-    container_name: fraud-bronze-spark
-    entrypoint: ["python", "/opt/bronze/cdc_transactions_to_bronze.py"]
-    volumes:
-      - ../batch_processing/bronze:/opt/bronze:ro
-    depends_on:
-      kafka:
-        condition: service_healthy
-      connector-init:
-        condition: service_completed_successfully
-    restart: on-failure
 
 volumes:
   kafka_data:

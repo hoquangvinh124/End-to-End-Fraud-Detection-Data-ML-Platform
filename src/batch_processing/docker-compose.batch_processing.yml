@@ -19,7 +19,9 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: spark-silver-batch
-    entrypoint: ["python", "/opt/silver/bronze_to_silver_transactions.py"]
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+      - /opt/silver/silver_transactions_batch.py
     volumes:
       - ./silver:/opt/silver:ro
     depends_on:

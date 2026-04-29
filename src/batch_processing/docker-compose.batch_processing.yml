@@ -1,9 +1,9 @@
 services:
   spark-bronze-stream:
     build:
-      context: bronze
+      context: .
       dockerfile: Dockerfile
-    container_name: fraud-bronze-spark
+    container_name: spark-batch-processing
     entrypoint: ["python", "/opt/bronze/cdc_transactions_to_bronze.py"]
     volumes:
       - ./bronze:/opt/bronze:ro

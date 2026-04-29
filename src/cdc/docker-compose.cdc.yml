@@ -19,7 +19,7 @@ services:
 
   kafka:
     image: apache/kafka:3.8.0
-    container_name: fraud-cdc-kafka
+    container_name: kafka
     ports:
       - "9092:9092"
     environment:
@@ -53,7 +53,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.connect
-    container_name: fraud-cdc-connect
+    container_name: kafka-connect-cdc
     ports:
       - "8083:8083"
     environment:
@@ -79,7 +79,7 @@ services:
       retries: 10
 
   kafka-ui:
-    image: provectuslabs/kafka-ui:v0.7.2
+    image: provectuslabs/kafka-ui
     container_name: fraud-cdc-kafka-ui
     ports:
       - "8080:8080"
@@ -95,7 +95,7 @@ services:
       kafka-connect:
         condition: service_healthy
 
-  connector-init:
+  connector-init-debezium:
     image: curlimages/curl:8.8.0
     container_name: fraud-cdc-connector-init
     entrypoint: ["/bin/sh", "/scripts/register-transactions-connector.sh"]
@@ -115,6 +115,17 @@ services:
       kafka-connect:
         condition: service_healthy
     restart: "no"
+
+  debezium-ui:
+    image: quay.io/debezium/debezium-ui:2.7
+    container_name: fraud-cdc-debezium-ui
+    ports:
+      - "8088:8080"
+    environment:
+      KAFKA_CONNECT_URIS: http://kafka-connect:8083
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
 
 volumes:
   kafka_data:

@@ -13,3 +13,16 @@ services:
       connector-init-debezium:
         condition: service_completed_successfully
     restart: on-failure
+
+  spark-silver-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-silver-batch
+    entrypoint: ["python", "/opt/silver/bronze_to_silver_transactions.py"]
+    volumes:
+      - ./silver:/opt/silver:ro
+    depends_on:
+      spark-bronze-stream:
+        condition: service_started
+    restart: on-failure

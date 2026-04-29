@@ -135,7 +135,7 @@ def main() -> None:
     trigger_interval = spark.conf.get("spark.bronze.trigger.interval")
     sr_url = spark.conf.get("spark.bronze.schema.registry.url")
 
-    avro_schema_str = fetch_avro_schema(sr_url, f"{topic}-value")
+    avro_schema_str = fetch_avro_schema(sr_url, f"{topic}")
 
     kafka_df = (
         spark.readStream.format("kafka")

@@ -15,3 +15,4 @@ include:
   - src/lakehouse/docker-compose.lakehouse.yml
   - src/monitoring/docker-compose.observability.yml
   - src/batch_processing/docker-compose.batch_processing.yml
+

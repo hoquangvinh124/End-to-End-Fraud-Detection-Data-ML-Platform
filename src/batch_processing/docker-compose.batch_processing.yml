@@ -4,12 +4,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: spark-batch-processing
-    entrypoint: ["python", "/opt/bronze/cdc_transactions_to_bronze.py"]
+    entrypoint: ["/opt/spark/bin/spark-submit", "/opt/bronze/cdc_transactions_to_bronze.py"]
     volumes:
       - ./bronze:/opt/bronze:ro
     depends_on:
       kafka:
         condition: service_healthy
-      connector-init:
+      connector-init-debezium:
         condition: service_completed_successfully
     restart: on-failure

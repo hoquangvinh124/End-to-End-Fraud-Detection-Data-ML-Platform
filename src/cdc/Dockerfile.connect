@@ -1,16 +1,11 @@
-FROM quay.io/debezium/connect:3.0
+FROM confluentinc/cp-kafka-connect:7.5.0 AS kafka-connector-plugin
 
-USER root
+RUN confluent-hub install --no-prompt \
+    confluentinc/kafka-connect-avro-converter:8.2.0
 
-# Install Confluent Hub client, then the Avro Converter plugin.
-# Plugin JARs land in /kafka/connect/ which is on KAFKA_CONNECT_PLUGINS_DIR.
-RUN curl -fsSL -o /tmp/confluent-hub-client.tar.gz \
-      https://client.hub.confluent.io/confluent-hub-client-latest.tar.gz && \
-    mkdir -p /opt/confluent-hub && \
-    tar -xzf /tmp/confluent-hub-client.tar.gz -C /opt/confluent-hub && \
-    /opt/confluent-hub/bin/confluent-hub install --no-prompt \
-      --component-dir /kafka/connect \
-      confluentinc/kafka-connect-avro-converter:7.6.0 && \
-    rm /tmp/confluent-hub-client.tar.gz
+
+FROM quay.io/debezium/connect:3.0 AS debezium-connect
+
+COPY --from=kafka-connector-plugin /usr/share/confluent-hub-components /kafka/connect/
 
 USER 1001

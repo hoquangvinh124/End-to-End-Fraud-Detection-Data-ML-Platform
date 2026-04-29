@@ -2,7 +2,7 @@ services:
   fraud-detection-api:
     build:
       context: ../..
-      dockerfile: ../api/dockerfile
+      dockerfile: src/api/dockerfile
     container_name: fraud-detection-api
     ports:
       - "8000:8000"

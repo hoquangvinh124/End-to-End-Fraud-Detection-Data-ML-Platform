@@ -1,4 +1,4 @@
-"""fraud_batch_daily — daily Spark batch pipeline for fraud detection features.
+"""feature_pipeline_daily — daily Spark batch pipeline to build ML features.
 
 Runs every day at 02:00 UTC and processes CDC data for the previous calendar day
 (Airflow's ``{{ ds }}``) through three medallion layers:
@@ -80,12 +80,12 @@ def spark_task(
 # ---------------------------------------------------------------------------
 
 with DAG(
-    dag_id="fraud_batch_daily",
+    dag_id="feature_pipeline_daily",
     description="Daily medallion batch pipeline: Bronze → Silver → Gold",
     schedule="0 2 * * *",
     start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["fraud", "batch", "spark"],
+    tags=["batch", "features", "spark"],
     doc_md=__doc__,
 ) as dag:
 

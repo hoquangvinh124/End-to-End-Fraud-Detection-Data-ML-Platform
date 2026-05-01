@@ -1,0 +1,98 @@
+# Airflow stack for the fraud detection batch pipeline.
+#
+# Usage:
+#   docker compose -f docker-compose.airflow.yml up -d
+#   open http://localhost:8090  (admin / admin)
+#
+# First-time setup (run once after 'airflow-init' completes):
+#   Set Airflow Variables in the UI (Admin → Variables):
+#     SPARK_BATCH_IMAGE  — Docker image built from src/batch_processing/Dockerfile
+#                          e.g. mlops-batch:latest
+#     DOCKER_NETWORK     — network shared with Kafka and MinIO
+#                          run: docker network ls --filter name=default
+#                          e.g. cdc_default or mlops_default
+#
+# The DockerOperator mounts /var/run/docker.sock so tasks launch containers
+# directly on the host Docker daemon (same daemon as Kafka/MinIO).
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.0
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
+    # Install Docker provider at startup (avoids custom image build)
+    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-docker>=3.9.0"
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - airflow_logs:/opt/airflow/logs
+    # DockerOperator needs access to host Docker daemon
+    - /var/run/docker.sock:/var/run/docker.sock
+  depends_on:
+    airflow-postgres:
+      condition: service_healthy
+
+services:
+  airflow-postgres:
+    image: postgres:16
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    entrypoint: /bin/bash
+    command: >
+      -c "
+        pip install apache-airflow-providers-docker>=3.9.0 --quiet &&
+        airflow db migrate &&
+        airflow users create
+          --username admin --password admin
+          --firstname Admin --lastname User
+          --role Admin --email admin@local.dev
+      "
+    restart: "no"
+
+  airflow-webserver:
+    <<: *airflow-common
+    container_name: airflow-webserver
+    command: webserver
+    ports:
+      - "8090:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-postgres:
+        condition: service_healthy
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: airflow-scheduler
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-webserver:
+        condition: service_healthy
+
+volumes:
+  airflow_postgres_data:
+  airflow_logs:

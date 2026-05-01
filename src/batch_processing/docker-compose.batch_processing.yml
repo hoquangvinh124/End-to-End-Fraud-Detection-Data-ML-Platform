@@ -29,6 +29,36 @@ services:
         condition: service_completed_successfully
     restart: on-failure
 
+  spark-bronze-fraud-cases-stream:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-bronze-fraud-cases-stream
+    entrypoint: ["/opt/spark/bin/spark-submit", "/opt/bronze/cdc_fraud_cases_to_bronze.py"]
+    volumes:
+      - ./bronze:/opt/bronze:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      connector-init-debezium:
+        condition: service_completed_successfully
+    restart: on-failure
+
+  spark-silver-fraud-cases-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-silver-fraud-cases-batch
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+      - /opt/silver/cdc_fraud_cases_normalize_merge_silver.py
+    volumes:
+      - ./silver:/opt/silver:ro
+    depends_on:
+      spark-bronze-fraud-cases-stream:
+        condition: service_started
+    restart: on-failure
+
   spark-gold-terminal-batch:
     build:
       context: .
@@ -41,6 +71,8 @@ services:
       - ./gold:/opt/gold:ro
     depends_on:
       spark-silver-batch:
+        condition: service_completed_successfully
+      spark-silver-fraud-cases-batch:
         condition: service_completed_successfully
     restart: on-failure
 

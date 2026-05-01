@@ -1,14 +1,26 @@
-"""Silver transactions batch job: Bronze Parquet → Silver Delta.
+"""CDC transactions normalize-merge to Silver: Bronze Parquet → Silver Delta.
 
-Runs as a single-pass batch (trigger=availableNow) that:
-  1. Reads new Bronze CDC Parquet files incrementally via checkpoint.
-  2. Casts types, adds ``event_date`` partition column, normalises CDC timestamps.
-  3. Validates rows — invalid records go to a quarantine Delta table.
-  4. Deduplicates valid rows by LSN (latest CDC event per ``transaction_id``).
-  5. MERGEs into Silver Delta table (handles inserts, updates, logical deletes).
+Reads incremental Bronze CDC Parquet files (written by ``cdc_transactions_to_bronze``),
+normalises them into canonical Silver rows, and MERGEs the result into a
+partitioned Silver Delta table.
+
+Pipeline steps:
+  1. Read new Bronze CDC Parquet files incrementally (checkpoint-tracked).
+  2. Cast types: event_timestamp/created_at → TIMESTAMP, amount → DECIMAL(18,2).
+     Derive ``event_date`` (DATE partition key) and convert CDC epoch-ms columns
+     to TIMESTAMP (``_source_ts``, ``_cdc_ts``).
+  3. Validate rows — invalid records (null PK, null timestamp, bad amount) are
+     appended to a quarantine Delta table for audit and reprocessing.
+  4. Deduplicate valid rows within each micro-batch by ``_lsn DESC, _source_ts DESC``
+     (latest Postgres Log Sequence Number wins per ``transaction_id``).
+  5. MERGE into Silver Delta table:
+       - update/delete only when incoming ``_lsn >= silver._lsn`` (prevents
+         late or replayed Bronze events from overwriting newer Silver state)
+       - logical deletes (``_cdc_op = 'd'``) are applied as hard deletes
+     On first run, falls back to a plain partitioned write (no existing table).
 
 Run:
-    spark-submit /opt/silver/silver_transactions_batch.py
+    spark-submit /opt/silver/cdc_transactions_normalize_merge_silver.py
 
 All configuration is loaded from spark-defaults.conf (``spark.silver.*`` namespace).
 """

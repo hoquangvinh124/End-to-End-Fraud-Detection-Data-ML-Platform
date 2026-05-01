@@ -21,7 +21,7 @@ services:
     container_name: spark-silver-batch
     entrypoint:
       - /opt/spark/bin/spark-submit
-      - /opt/silver/silver_transactions_batch.py
+      - /opt/silver/cdc_transactions_normalize_merge_silver.py
     volumes:
       - ./silver:/opt/silver:ro
     depends_on:

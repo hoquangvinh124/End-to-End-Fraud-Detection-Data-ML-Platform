@@ -18,8 +18,8 @@
 - **Flink**: stream processing with tumbling + sliding + session windows
 - **Spark**: batch processing, daily feature engineering
 - **MinIO**: S3-compatible data lake
-- **Apache Iceberg**: table format on MinIO (ACID)
-- **Trino**: query engine over Iceberg tables on MinIO
+- **Delta Lake**: table format on MinIO (ACID)
+- **Trino**: query engine over Delta Lake tables on MinIO
 - **Airflow**: orchestration of Spark/Flink jobs, data validation DAGs
 - **>100GB** data via high-throughput Kafka producer
 - **DataHub**: central metadata store (PostgreSQL) for data catalog, schema registry, feature definitions
@@ -56,5 +56,5 @@
 ### Storage (shared)
 - PostgreSQL: 1 instance, multiple DBs (mlflow_db, airflow_db, feast_db)
 - Redis: standalone (Feast online store)
-- MinIO: data lake (Iceberg tables, raw data)
+- MinIO: data lake (Delta Lake tables, raw data)
 - GCS: MLflow artifacts, model registry

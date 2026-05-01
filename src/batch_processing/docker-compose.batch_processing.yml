@@ -40,7 +40,7 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
-      connector-init-debezium:
+      connector-init-fraud-cases:
         condition: service_completed_successfully
     restart: on-failure
 

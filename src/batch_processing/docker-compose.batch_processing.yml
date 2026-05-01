@@ -14,6 +14,36 @@ services:
         condition: service_completed_successfully
     restart: on-failure
 
+  spark-gold-customer-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-gold-customer-batch
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+      - /opt/gold/silver_transactions_window_aggregate_customer_gold.py
+    volumes:
+      - ./gold:/opt/gold:ro
+    depends_on:
+      spark-silver-batch:
+        condition: service_completed_successfully
+    restart: on-failure
+
+  spark-gold-terminal-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: spark-gold-terminal-batch
+    entrypoint:
+      - /opt/spark/bin/spark-submit
+      - /opt/gold/silver_transactions_window_aggregate_terminal_gold.py
+    volumes:
+      - ./gold:/opt/gold:ro
+    depends_on:
+      spark-silver-batch:
+        condition: service_completed_successfully
+    restart: on-failure
+
   spark-silver-batch:
     build:
       context: .

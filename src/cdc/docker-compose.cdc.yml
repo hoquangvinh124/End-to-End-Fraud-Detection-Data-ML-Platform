@@ -98,14 +98,35 @@ services:
   connector-init-debezium:
     image: curlimages/curl:8.8.0
     container_name: cdc-connector-init
-    entrypoint: ["/bin/sh", "/scripts/register-transactions-connector.sh"]
+    entrypoint: ["/bin/sh", "/scripts/connectors/transactions/register.sh"]
     volumes:
       - ./:/scripts:ro
-      - ./transactions-connector.json:/config/transactions-connector.json:ro
+      - ./connectors/transactions/connector.json:/config/connector.json:ro
     environment:
       CONNECT_URL: http://kafka-connect:8083
       CONNECTOR_NAME: transactions-cdc-connector
-      CONFIG_PATH: /config/transactions-connector.json
+      CONFIG_PATH: /config/connector.json
+      DB_HOST: ${DB_HOST:-postgres-oltp}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-fraud_bank}
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
+    restart: "no"
+
+  connector-init-fraud-cases:
+    image: curlimages/curl:8.8.0
+    container_name: cdc-connector-init-fraud-cases
+    entrypoint: ["/bin/sh", "/scripts/connectors/fraud-cases/register.sh"]
+    volumes:
+      - ./:/scripts:ro
+      - ./connectors/fraud-cases/connector.json:/config/connector.json:ro
+    environment:
+      CONNECT_URL: http://kafka-connect:8083
+      CONNECTOR_NAME: fraud-cases-cdc-connector
+      CONFIG_PATH: /config/connector.json
       DB_HOST: ${DB_HOST:-postgres-oltp}
       DB_PORT: ${DB_PORT:-5432}
       DB_USER: ${DB_USER:-postgres}

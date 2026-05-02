@@ -50,19 +50,25 @@ def write_watermark(
 
     Uses a Delta MERGE on ``job_name`` so the table stays at one row per job.
     Falls back to an initial Delta write when the table does not yet exist.
+    If two jobs race on first run, the losing job retries via MERGE.
     """
     new_row = spark.createDataFrame(
-        [(job_name, version, datetime.datetime.utcnow())],
+        [(job_name, version, datetime.datetime.now(datetime.timezone.utc))],
         schema=_SCHEMA,
     )
-    if DeltaTable.isDeltaTable(spark, watermark_path):
-        (
-            DeltaTable.forPath(spark, watermark_path)
-            .alias("wm")
-            .merge(new_row.alias("new"), "wm.job_name = new.job_name")
-            .whenMatchedUpdateAll()
-            .whenNotMatchedInsertAll()
-            .execute()
-        )
-    else:
-        new_row.write.format("delta").save(watermark_path)
+    if not DeltaTable.isDeltaTable(spark, watermark_path):
+        try:
+            new_row.write.format("delta").mode("errorIfExists").save(watermark_path)
+            return
+        except Exception:
+            # Another job created the table between the isDeltaTable check and
+            # this write — fall through to the MERGE path below.
+            pass
+    (
+        DeltaTable.forPath(spark, watermark_path)
+        .alias("wm")
+        .merge(new_row.alias("new"), "wm.job_name = new.job_name")
+        .whenMatchedUpdateAll()
+        .whenNotMatchedInsertAll()
+        .execute()
+    )

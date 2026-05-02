@@ -81,6 +81,7 @@ class TestWriteWatermark:
         (
             spark.createDataFrame.return_value
             .write.format.return_value
+            .mode.return_value
             .save.assert_called_once_with("s3a://silver/_watermarks/")
         )
 
@@ -104,4 +105,28 @@ class TestWriteWatermark:
         mock_dt.forPath.assert_called_once_with(
             spark, "s3a://silver/_watermarks/"
         )
+        mock_merge_builder.execute.assert_called_once()
+
+    def test_falls_back_to_merge_when_concurrent_create_race(self):
+        spark = MagicMock()
+        mock_merge_builder = MagicMock()
+        with patch("batch_processing.utils.watermark.DeltaTable") as mock_dt:
+            mock_dt.isDeltaTable.return_value = False
+            # Simulate race: initial save fails
+            (
+                spark.createDataFrame.return_value
+                .write.format.return_value
+                .mode.return_value
+                .save.side_effect
+            ) = Exception("path already exists")
+            mock_delta = MagicMock()
+            mock_dt.forPath.return_value = mock_delta
+            mock_delta.alias.return_value.merge.return_value = mock_merge_builder
+            mock_merge_builder.whenMatchedUpdateAll.return_value = mock_merge_builder
+            mock_merge_builder.whenNotMatchedInsertAll.return_value = (
+                mock_merge_builder
+            )
+            write_watermark(
+                spark, "s3a://silver/_watermarks/", "silver-transactions", 5
+            )
         mock_merge_builder.execute.assert_called_once()

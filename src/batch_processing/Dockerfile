@@ -16,4 +16,13 @@ RUN PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,org.apache.spark:
 # Bake job configuration into the image — Spark auto-loads this on startup.
 COPY spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 
+# Bake all job scripts into the image so no volume mounts are needed at runtime.
+COPY bronze/ /opt/bronze/
+COPY silver/ /opt/silver/
+COPY gold/ /opt/gold/
+COPY utils/ /opt/utils/
+
+# Add /opt to PYTHONPATH so Silver/Gold jobs can import utils.* at runtime.
+ENV PYTHONPATH /opt
+
 USER spark

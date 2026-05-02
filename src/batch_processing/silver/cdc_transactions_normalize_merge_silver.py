@@ -1,23 +1,22 @@
-"""CDC transactions normalize-merge to Silver: Bronze Parquet → Silver Delta.
+"""CDC transactions normalize-merge to Silver: Bronze Delta (CDF) → Silver Delta.
 
-Reads incremental Bronze CDC Parquet files (written by ``cdc_transactions_to_bronze``),
-normalises them into canonical Silver rows, and MERGEs the result into a
-partitioned Silver Delta table.
+Reads new Bronze CDC rows incrementally via Delta Change Data Feed, normalises
+them into canonical Silver rows, and MERGEs the result into a partitioned
+Silver Delta table.
+
+Incremental state is tracked by a Delta watermark table
+(``spark.silver.watermark.path``): the last successfully processed Bronze
+Delta version is persisted there and read at job start so each nightly run
+only processes new Bronze commits.
 
 Pipeline steps:
-  1. Read new Bronze CDC Parquet files incrementally (checkpoint-tracked).
-  2. Cast types: event_timestamp/created_at → TIMESTAMP, amount → DECIMAL(18,2).
-     Derive ``event_date`` (DATE partition key) and convert CDC epoch-ms columns
-     to TIMESTAMP (``_source_ts``, ``_cdc_ts``).
-  3. Validate rows — invalid records (null PK, null timestamp, bad amount) are
-     appended to a quarantine Delta table for audit and reprocessing.
-  4. Deduplicate valid rows within each micro-batch by ``_lsn DESC, _source_ts DESC``
-     (latest Postgres Log Sequence Number wins per ``transaction_id``).
-  5. MERGE into Silver Delta table:
-       - update/delete only when incoming ``_lsn >= silver._lsn`` (prevents
-         late or replayed Bronze events from overwriting newer Silver state)
-       - logical deletes (``_cdc_op = 'd'``) are applied as hard deletes
-     On first run, falls back to a plain partitioned write (no existing table).
+  1. Read watermark → last_bronze_version (None on first run → startingVersion=0).
+  2. Read current Bronze Delta version from history.
+  3. If no new commits, exit 0.
+  4. Batch CDF read: startingVersion=last+1, endingVersion=current.
+     Filter _change_type='insert', drop CDF metadata columns.
+  5. cast_types → validate_and_split → write_quarantine → merge_to_silver.
+  6. write_watermark(current_version) — only after successful MERGE.
 
 Run:
     spark-submit /opt/silver/cdc_transactions_normalize_merge_silver.py
@@ -31,44 +30,16 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql import window as W
+from utils.watermark import read_watermark, write_watermark
 
-# ---------------------------------------------------------------------------
-# Bronze schema — must match the Parquet written by cdc_transactions_to_bronze
-# ---------------------------------------------------------------------------
+# CDF metadata columns added by Delta — dropped before cast_types so the
+# downstream functions see the same schema as before.
+_CDF_META_COLS = ("_change_type", "_commit_version", "_commit_timestamp")
 
-BRONZE_SCHEMA = T.StructType(
-    [
-        T.StructField("transaction_id", T.LongType()),
-        T.StructField("event_timestamp", T.StringType()),
-        T.StructField("customer_id", T.StringType()),
-        T.StructField("account_id", T.StringType()),
-        T.StructField("card_id", T.StringType()),
-        T.StructField("terminal_id", T.StringType()),
-        T.StructField("amount", T.StringType()),
-        T.StructField("currency_code", T.StringType()),
-        T.StructField("transaction_type", T.StringType()),
-        T.StructField("channel_type", T.StringType()),
-        T.StructField("auth_status", T.StringType()),
-        T.StructField("tx_time_seconds", T.IntegerType()),
-        T.StructField("tx_time_days", T.IntegerType()),
-        T.StructField("is_weekend", T.BooleanType()),
-        T.StructField("is_night", T.BooleanType()),
-        T.StructField("created_at", T.StringType()),
-        T.StructField("_op", T.StringType()),
-        T.StructField("_source_table", T.StringType()),
-        T.StructField("_source_ts_ms", T.LongType()),
-        T.StructField("_cdc_ts_ms", T.LongType()),
-        T.StructField("_snapshot", T.StringType()),
-        T.StructField("_lsn", T.LongType()),
-        T.StructField("_deleted", T.BooleanType()),
-        T.StructField("_ingested_at", T.TimestampType()),
-    ]
-)
+JOB_NAME = "silver-transactions"
 
 
 def build_spark_session() -> SparkSession:
-    # Spark auto-loads $SPARK_HOME/conf/spark-defaults.conf — Delta extensions
-    # (DeltaSparkSessionExtension + DeltaCatalog) are configured there.
     return SparkSession.builder.appName("silver-transactions-batch").getOrCreate()
 
 
@@ -149,7 +120,7 @@ def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
 
     bad_count = quarantine_df.count()
     quarantine_df.write.format("delta").mode("append").save(quarantine_path)
-    print(f"[silver] quarantined {bad_count:,} bad rows → {quarantine_path}")
+    print(f"[{JOB_NAME}] quarantined {bad_count:,} bad rows → {quarantine_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +133,8 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
 
     PostgreSQL LSN (Log Sequence Number) is monotonically increasing within a
     Postgres instance, making it the correct primary ordering key when multiple
-    CDC events for the same ``transaction_id`` arrive in the same micro-batch.
-    ``_source_ts_ms`` is used as a tie-breaker for events sharing the same LSN
-    (e.g. multiple changes committed in the same transaction).
+    CDC events for the same ``transaction_id`` arrive in the same batch.
+    ``_source_ts`` is used as a tie-breaker for events sharing the same LSN.
 
     ``_lsn`` is **kept** in the Silver schema so the MERGE can guard against
     late or out-of-order Bronze files overwriting newer Silver rows across
@@ -213,7 +183,7 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
             .save(silver_path)
         )
 
-    print(f"[silver] merged {good_count:,} rows → {silver_path}")
+    print(f"[{JOB_NAME}] merged {good_count:,} rows → {silver_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -226,30 +196,63 @@ def main() -> None:
 
     bronze_path = spark.conf.get("spark.silver.bronze.input.path")
     silver_path = spark.conf.get("spark.silver.output.path")
-    checkpoint_path = spark.conf.get("spark.silver.checkpoint.path")
     quarantine_path = spark.conf.get("spark.silver.quarantine.path")
+    watermark_path = spark.conf.get("spark.silver.watermark.path")
 
-    bronze_stream = (
-        spark.readStream.format("parquet")
-        .schema(BRONZE_SCHEMA)
-        .load(bronze_path)
+    if not DeltaTable.isDeltaTable(spark, bronze_path):
+        raise RuntimeError(
+            f"Bronze path {bronze_path!r} is not a Delta table. "
+            "Ensure the Bronze streaming job has been updated to write Delta "
+            "format and at least one micro-batch has been committed."
+        )
+
+    last_version: int | None = read_watermark(spark, watermark_path, JOB_NAME)
+    current_version = int(
+        DeltaTable.forPath(spark, bronze_path).history(1).first()["version"]
     )
 
-    def foreach_batch(batch_df: DataFrame, _batch_id: int) -> None:
-        if batch_df.isEmpty():
-            return
-        typed_df = cast_types(batch_df)
-        valid_df, quarantine_df = validate_and_split(typed_df)
-        write_quarantine(quarantine_path, quarantine_df)
-        merge_to_silver(spark, silver_path, valid_df)
+    if last_version is not None and last_version >= current_version:
+        print(
+            f"[{JOB_NAME}] no new data "
+            f"(last_processed={last_version}, "
+            f"bronze_current={current_version}), exiting."
+        )
+        return
 
-    (
-        bronze_stream.writeStream.foreachBatch(foreach_batch)
-        .option("checkpointLocation", checkpoint_path)
-        .trigger(availableNow=True)
-        .start()
-        .awaitTermination()
-    )
+    start_version = 0 if last_version is None else last_version + 1
+    print(f"[{JOB_NAME}] reading Bronze CDF versions {start_version}–{current_version}")
+
+    try:
+        bronze_df = (
+            spark.read.format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", start_version)
+            .option("endingVersion", current_version)
+            .load(bronze_path)
+            .filter(F.col("_change_type") == "insert")
+            .drop(*_CDF_META_COLS)
+        )
+    except Exception as exc:
+        msg = str(exc)
+        if "outside the range" in msg or "is not enabled" in msg:
+            raise RuntimeError(
+                f"Bronze CDF read failed for {JOB_NAME}: {msg}. "
+                "If startingVersion is outside log retention, reset the "
+                f"watermark by deleting the '{JOB_NAME}' row from "
+                f"{watermark_path!r} and re-run."
+            ) from exc
+        raise
+
+    if bronze_df.isEmpty():
+        print(f"[{JOB_NAME}] CDF returned 0 insert rows, exiting.")
+        return
+
+    typed_df = cast_types(bronze_df)
+    valid_df, quarantine_df = validate_and_split(typed_df)
+    write_quarantine(quarantine_path, quarantine_df)
+    merge_to_silver(spark, silver_path, valid_df)
+    write_watermark(spark, watermark_path, JOB_NAME, current_version)
+    print(f"[{JOB_NAME}] watermark updated to Bronze version {current_version}.")
 
 
 if __name__ == "__main__":

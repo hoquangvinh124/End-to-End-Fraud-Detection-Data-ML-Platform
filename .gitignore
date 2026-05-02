@@ -34,3 +34,5 @@ docs/superpowers/
 .claude/
 .github/hooks/
 .github/*.md
+
+lint_output.txt

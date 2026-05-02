@@ -97,7 +97,7 @@ def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
     if quarantine_df.isEmpty():
         return
     quarantine_df.write.format("delta").mode("append").save(quarantine_path)
-    print(f"[silver-fraud_cases] quarantined bad rows → {quarantine_path}")
+    print(f"[{JOB_NAME}] quarantined bad rows → {quarantine_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -106,10 +106,7 @@ def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
 
 
 def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) -> None:
-    """Deduplicate by LSN within batch.
-
-    MERGE into the Silver fraud_cases Delta table.
-    """
+    """Deduplicate by LSN, then MERGE into Silver fraud_cases Delta table."""
     window = W.Window.partitionBy("case_id").orderBy(
         F.desc("_lsn"), F.desc("_source_ts")
     )
@@ -140,7 +137,7 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
             .save(silver_path)
         )
 
-    print(f"[silver-fraud_cases] merged rows → {silver_path}")
+    print(f"[{JOB_NAME}] merged rows → {silver_path}")
 
 
 # ---------------------------------------------------------------------------

@@ -1,7 +1,8 @@
-"""CDC fraud cases normalize-merge to Silver: Bronze Parquet → Silver Delta.
+"""CDC fraud cases normalize-merge to Silver: Bronze Delta (CDF) → Silver Delta.
 
-Reads incremental Bronze fraud_cases CDC Parquet files, normalises them into
-canonical Silver rows, and MERGEs the result into a partitioned Silver Delta table.
+Reads new Bronze fraud_cases CDC rows incrementally via Delta Change Data Feed,
+normalises them into canonical Silver rows, and MERGEs the result into a
+partitioned Silver Delta table.
 
 ``is_fraud`` is derived in Silver (not kept as a raw column) so all downstream
 consumers — Gold terminal features, training dataset, reporting — can read a
@@ -12,21 +13,18 @@ single clean boolean without reimplementing the business rule:
 
 CDC lifecycle:
   - INSERT when investigation opens (resolved_at NULL, case_status='open')
-  - UPDATE when investigation closes (resolved_at set, case_status='confirmed'/'dismissed')
+  - UPDATE when investigation closes (resolved_at set,
+    case_status='confirmed'/'dismissed')
   - Silver MERGE keeps the latest version per case_id (LSN-ordered)
 
-Pipeline steps:
-  1. Read new Bronze CDC Parquet files incrementally (checkpoint-tracked).
-  2. Cast types: reported_at/resolved_at/created_at → TIMESTAMP,
-     loss_amount → DECIMAL(12,2); derive is_fraud (BooleanType).
-  3. Validate rows — invalid records go to quarantine Delta table.
-  4. Deduplicate valid rows by _lsn DESC, _source_ts DESC per case_id.
-  5. MERGE into Silver Delta table (LSN guard prevents late events regressing state).
+Incremental state is tracked by the shared Delta watermark table
+(``spark.silver.fraud_cases.watermark.path``).
 
 Run:
-    spark-submit /opt/bronze/cdc_fraud_cases_normalize_merge_silver.py
+    spark-submit /opt/silver/cdc_fraud_cases_normalize_merge_silver.py
 
-All configuration is loaded from spark-defaults.conf (``spark.silver.fraud_cases.*`` namespace).
+All configuration is loaded from spark-defaults.conf
+(``spark.silver.fraud_cases.*`` namespace).
 """
 from __future__ import annotations
 
@@ -35,34 +33,11 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql import window as W
+from utils.watermark import read_watermark, write_watermark
 
-# ---------------------------------------------------------------------------
-# Bronze schema — must match the Parquet written by cdc_fraud_cases_to_bronze
-# ---------------------------------------------------------------------------
+_CDF_META_COLS = ("_change_type", "_commit_version", "_commit_timestamp")
 
-BRONZE_SCHEMA = T.StructType(
-    [
-        T.StructField("case_id", T.StringType()),
-        T.StructField("transaction_id", T.LongType()),
-        T.StructField("customer_id", T.StringType()),
-        T.StructField("card_id", T.StringType()),
-        T.StructField("fraud_scenario", T.IntegerType()),
-        T.StructField("case_status", T.StringType()),
-        T.StructField("resolution_source", T.StringType()),
-        T.StructField("reported_at", T.StringType()),
-        T.StructField("resolved_at", T.StringType()),   # nullable — NULL while open
-        T.StructField("loss_amount", T.StringType()),
-        T.StructField("created_at", T.StringType()),
-        T.StructField("_op", T.StringType()),
-        T.StructField("_source_table", T.StringType()),
-        T.StructField("_source_ts_ms", T.LongType()),
-        T.StructField("_cdc_ts_ms", T.LongType()),
-        T.StructField("_snapshot", T.StringType()),
-        T.StructField("_lsn", T.LongType()),
-        T.StructField("_deleted", T.BooleanType()),
-        T.StructField("_ingested_at", T.TimestampType()),
-    ]
-)
+JOB_NAME = "silver-fraud-cases"
 
 
 def build_spark_session() -> SparkSession:
@@ -85,13 +60,15 @@ def cast_types(df: DataFrame) -> DataFrame:
     """
     return (
         df.withColumn("reported_at", F.to_timestamp("reported_at"))
-        .withColumn("resolved_at", F.to_timestamp("resolved_at"))   # stays NULL if not yet resolved
+        .withColumn("resolved_at", F.to_timestamp("resolved_at"))
         .withColumn("created_at", F.to_timestamp("created_at"))
-        .withColumn("loss_amount", F.col("loss_amount").cast(T.DecimalType(12, 2)))
-        # is_fraud = confirmed investigation that has a resolution timestamp
+        .withColumn(
+            "loss_amount", F.col("loss_amount").cast(T.DecimalType(12, 2))
+        )
         .withColumn(
             "is_fraud",
-            (F.col("case_status") == F.lit("confirmed")) & F.col("resolved_at").isNotNull(),
+            (F.col("case_status") == F.lit("confirmed"))
+            & F.col("resolved_at").isNotNull(),
         )
         .withColumnRenamed("_op", "_cdc_op")
         .withColumn(
@@ -148,7 +125,10 @@ def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
         return
     bad_count = quarantine_df.count()
     quarantine_df.write.format("delta").mode("append").save(quarantine_path)
-    print(f"[silver-fraud_cases] quarantined {bad_count:,} bad rows → {quarantine_path}")
+    print(
+        f"[silver-fraud_cases] quarantined {bad_count:,} bad rows → "
+        f"{quarantine_path}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -216,30 +196,63 @@ def main() -> None:
 
     bronze_path = spark.conf.get("spark.silver.fraud_cases.bronze.input.path")
     silver_path = spark.conf.get("spark.silver.fraud_cases.output.path")
-    checkpoint_path = spark.conf.get("spark.silver.fraud_cases.checkpoint.path")
     quarantine_path = spark.conf.get("spark.silver.fraud_cases.quarantine.path")
+    watermark_path = spark.conf.get("spark.silver.fraud_cases.watermark.path")
 
-    bronze_stream = (
-        spark.readStream.format("parquet")
-        .schema(BRONZE_SCHEMA)
-        .load(bronze_path)
+    if not DeltaTable.isDeltaTable(spark, bronze_path):
+        raise RuntimeError(
+            f"Bronze path {bronze_path!r} is not a Delta table. "
+            "Ensure the Bronze streaming job has been updated to write Delta "
+            "format and at least one micro-batch has been committed."
+        )
+
+    last_version: int | None = read_watermark(spark, watermark_path, JOB_NAME)
+    current_version = int(
+        DeltaTable.forPath(spark, bronze_path).history(1).first()["version"]
     )
 
-    def foreach_batch(batch_df: DataFrame, _batch_id: int) -> None:
-        if batch_df.isEmpty():
-            return
-        typed_df = cast_types(batch_df)
-        valid_df, quarantine_df = validate_and_split(typed_df)
-        write_quarantine(quarantine_path, quarantine_df)
-        merge_to_silver(spark, silver_path, valid_df)
+    if last_version is not None and last_version >= current_version:
+        print(
+            f"[{JOB_NAME}] no new data "
+            f"(last_processed={last_version}, "
+            f"bronze_current={current_version}), exiting."
+        )
+        return
 
-    (
-        bronze_stream.writeStream.foreachBatch(foreach_batch)
-        .option("checkpointLocation", checkpoint_path)
-        .trigger(availableNow=True)
-        .start()
-        .awaitTermination()
-    )
+    start_version = 0 if last_version is None else last_version + 1
+    print(f"[{JOB_NAME}] reading Bronze CDF versions {start_version}–{current_version}")
+
+    try:
+        bronze_df = (
+            spark.read.format("delta")
+            .option("readChangeFeed", "true")
+            .option("startingVersion", start_version)
+            .option("endingVersion", current_version)
+            .load(bronze_path)
+            .filter(F.col("_change_type") == "insert")
+            .drop(*_CDF_META_COLS)
+        )
+    except Exception as exc:
+        msg = str(exc)
+        if "outside the range" in msg or "is not enabled" in msg:
+            raise RuntimeError(
+                f"Bronze CDF read failed for {JOB_NAME}: {msg}. "
+                "If startingVersion is outside log retention, reset the "
+                f"watermark by deleting the '{JOB_NAME}' row from "
+                f"{watermark_path!r} and re-run."
+            ) from exc
+        raise
+
+    if bronze_df.isEmpty():
+        print(f"[{JOB_NAME}] CDF returned 0 insert rows, exiting.")
+        return
+
+    typed_df = cast_types(bronze_df)
+    valid_df, quarantine_df = validate_and_split(typed_df)
+    write_quarantine(quarantine_path, quarantine_df)
+    merge_to_silver(spark, silver_path, valid_df)
+    write_watermark(spark, watermark_path, JOB_NAME, current_version)
+    print(f"[{JOB_NAME}] watermark updated to Bronze version {current_version}.")
 
 
 if __name__ == "__main__":

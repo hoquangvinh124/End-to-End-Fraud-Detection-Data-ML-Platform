@@ -129,3 +129,56 @@ class TestMainWatermarkWrittenAfterMerge:
         mock_wm.assert_called_once_with(
             spark, "s3a://silver/_watermarks/", "silver-transactions", 3
         )
+
+
+class TestMainAllRowsQuarantined:
+    def test_watermark_advances_when_all_rows_quarantined(self):
+        """Watermark must advance even when all valid_df rows are quarantined.
+
+        Prevents infinite reprocessing of permanently-invalid Bronze versions.
+        """
+        with (
+            patch(f"{MODULE}.DeltaTable") as mock_dt,
+            patch(f"{MODULE}.read_watermark", return_value=None),
+            patch(f"{MODULE}.write_watermark") as mock_wm,
+            patch(f"{MODULE}.cast_types") as mock_cast,
+            patch(f"{MODULE}.validate_and_split") as mock_split,
+            patch(f"{MODULE}.write_quarantine") as mock_quarantine,
+            patch(f"{MODULE}.merge_to_silver") as mock_merge,
+            patch(f"{MODULE}.build_spark_session") as mock_build,
+            patch(f"{MODULE}.F"),
+        ):
+            mock_dt.isDeltaTable.return_value = True
+            mock_dt.forPath.return_value.history.return_value.first.return_value = {
+                "version": 7
+            }
+            spark = mock_build.return_value
+            spark.conf.get.side_effect = lambda k: {
+                "spark.silver.bronze.input.path": "s3a://bronze/cdc/transactions",
+                "spark.silver.output.path": "s3a://silver/transactions",
+                "spark.silver.quarantine.path": "s3a://silver/quarantine/transactions",
+                "spark.silver.watermark.path": "s3a://silver/_watermarks/",
+            }[k]
+            mock_df = MagicMock()
+            mock_df.isEmpty.return_value = False
+            (
+                spark.read.format.return_value
+                .option.return_value.option.return_value.option.return_value
+                .load.return_value.filter.return_value.drop.return_value
+            ) = mock_df
+            mock_cast.return_value = mock_df
+            empty_df = MagicMock()
+            quarantine_df = MagicMock()
+            mock_split.return_value = (empty_df, quarantine_df)
+
+            from batch_processing.silver import (
+                cdc_transactions_normalize_merge_silver as silver_mod,
+            )
+
+            silver_mod.main()
+
+        mock_quarantine.assert_called_once()
+        mock_merge.assert_called_once()
+        mock_wm.assert_called_once_with(
+            spark, "s3a://silver/_watermarks/", "silver-transactions", 7
+        )

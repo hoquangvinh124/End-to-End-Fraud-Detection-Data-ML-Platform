@@ -166,6 +166,7 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
                 condition="bronze._cdc_op = 'd'"
                 " AND (silver._lsn IS NULL OR bronze._lsn >= silver._lsn)"
             )
+            # Update only when the incoming event is as fresh or fresher than Silver.
             .whenMatchedUpdateAll(
                 condition="bronze._cdc_op != 'd'"
                 " AND (silver._lsn IS NULL OR bronze._lsn >= silver._lsn)"

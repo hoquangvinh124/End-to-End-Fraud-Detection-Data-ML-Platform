@@ -26,14 +26,10 @@ $SPARK_HOME/conf/spark-defaults.conf). Job parameters live under the
 """
 from __future__ import annotations
 
-import json
-import time
-import urllib.error
-import urllib.request
-
-from pyspark.sql import SparkSession
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
+from utils.schema_registry_helpers import fetch_avro_schema
 
 
 def build_spark_session() -> SparkSession:
@@ -41,49 +37,11 @@ def build_spark_session() -> SparkSession:
 
 
 # ---------------------------------------------------------------------------
-# Schema Registry helpers
-# ---------------------------------------------------------------------------
-
-
-def fetch_avro_schema(
-    sr_url: str, subject: str, retries: int = 30, delay: int = 5
-) -> str:
-    """Fetch latest Avro schema string from Confluent Schema Registry.
-
-    Retries to handle the window between connector registration and
-    Debezium's first snapshot message (which triggers schema registration).
-    """
-    url = f"{sr_url}/subjects/{subject}/versions/latest"
-    for attempt in range(retries):
-        try:
-            with urllib.request.urlopen(url) as resp:
-                return json.loads(resp.read())["schema"]
-        except urllib.error.HTTPError as exc:
-            if exc.code == 404:
-                print(
-                    f"Schema not yet registered for {subject!r}, "
-                    f"retrying ({attempt + 1}/{retries})…"
-                )
-                time.sleep(delay)
-            else:
-                raise
-        except urllib.error.URLError as exc:
-            print(
-                f"Schema Registry unreachable: {exc}, "
-                f"retrying ({attempt + 1}/{retries})…"
-            )
-            time.sleep(delay)
-    raise RuntimeError(
-        f"Could not fetch Avro schema for subject {subject!r} after {retries} attempts"
-    )
-
-
-# ---------------------------------------------------------------------------
 # Transform
 # ---------------------------------------------------------------------------
 
 
-def build_bronze_rows(raw_df, avro_schema_str: str):
+def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
     """Unwrap Debezium Avro envelope and add bronze metadata columns.
 
     Confluent wire format prefixes each Avro message with 5 bytes:
@@ -92,12 +50,12 @@ def build_bronze_rows(raw_df, avro_schema_str: str):
 
     For deletes (op='d') the relevant payload is ``before``; all others use ``after``.
     """
-    event_df = raw_df.select(
-        from_avro(
-            F.expr("substring(value, 6, length(value) - 5)"),
-            avro_schema_str,
-        ).alias("event")
-    )
+    # Confluent wire format: 1-byte magic (0x00) + 4-byte schema ID = 5 bytes.
+    # substring() is 1-indexed in Spark SQL: skip to byte 6, read the rest.
+    avro_payload = F.expr("substring(value, 6, length(value) - 5)")
+
+    event_col = from_avro(avro_payload, avro_schema_str).alias("event")
+    event_df = raw_df.select(event_col)
 
     payload = F.when(
         F.col("event.op") == F.lit("d"), F.col("event.before")
@@ -157,7 +115,7 @@ def main() -> None:
     bronze_df = build_bronze_rows(kafka_df, avro_schema_str)
 
     query = (
-        bronze_df.writeStream.format("parquet")
+        bronze_df.writeStream.format("delta")
         .outputMode("append")
         .option("checkpointLocation", checkpoint_path)
         .trigger(processingTime=trigger_interval)

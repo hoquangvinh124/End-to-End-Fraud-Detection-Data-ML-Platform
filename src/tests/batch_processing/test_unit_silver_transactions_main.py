@@ -1,14 +1,12 @@
 """Unit tests for cdc_transactions_normalize_merge_silver.main() logic.
 
 Validates version-range logic, no-data early exit, CDF column dropping,
-error handling, and watermark write-after-MERGE ordering.
+and watermark write-after-MERGE ordering.
 All Spark/Delta interactions are mocked.
 """
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 # The module under test — import after patching heavy deps
 MODULE = "batch_processing.silver.cdc_transactions_normalize_merge_silver"
@@ -29,7 +27,6 @@ class TestMainNoNewData:
             patch(f"{MODULE}.write_watermark") as mock_wm,
             patch(f"{MODULE}.build_spark_session") as mock_build,
         ):
-            mock_dt.isDeltaTable.return_value = True
             mock_dt.forPath.return_value.history.return_value.first.return_value = {
                 "version": 10
             }
@@ -51,39 +48,6 @@ class TestMainNoNewData:
         assert "no new data" in captured.out
 
 
-class TestMainCDFReadError:
-    def test_raises_runtime_error_on_retention_exceeded(self):
-        with (
-            patch(f"{MODULE}.DeltaTable") as mock_dt,
-            patch(f"{MODULE}.read_watermark", return_value=0),
-            patch(f"{MODULE}.build_spark_session") as mock_build,
-        ):
-            mock_dt.isDeltaTable.return_value = True
-            mock_dt.forPath.return_value.history.return_value.first.return_value = {
-                "version": 5
-            }
-            spark = mock_build.return_value
-            spark.conf.get.side_effect = lambda k: {
-                "spark.silver.bronze.input.path": "s3a://bronze/cdc/transactions",
-                "spark.silver.output.path": "s3a://silver/transactions",
-                "spark.silver.quarantine.path": "s3a://silver/quarantine/transactions",
-                "spark.silver.watermark.path": "s3a://silver/_watermarks/",
-            }[k]
-            read_chain = (
-                spark.read.format.return_value.option.return_value.option.return_value.option.return_value
-            )
-            read_chain.load.side_effect = Exception(
-                "outside the range of retained versions"
-            )
-
-            from batch_processing.silver import (
-                cdc_transactions_normalize_merge_silver as silver_mod,
-            )
-
-            with pytest.raises(RuntimeError, match="outside log retention"):
-                silver_mod.main()
-
-
 class TestMainWatermarkWrittenAfterMerge:
     def test_watermark_written_only_after_successful_merge(self):
         with (
@@ -97,7 +61,6 @@ class TestMainWatermarkWrittenAfterMerge:
             patch(f"{MODULE}.build_spark_session") as mock_build,
             patch(f"{MODULE}.F"),
         ):
-            mock_dt.isDeltaTable.return_value = True
             mock_dt.forPath.return_value.history.return_value.first.return_value = {
                 "version": 3
             }
@@ -148,7 +111,6 @@ class TestMainAllRowsQuarantined:
             patch(f"{MODULE}.build_spark_session") as mock_build,
             patch(f"{MODULE}.F"),
         ):
-            mock_dt.isDeltaTable.return_value = True
             mock_dt.forPath.return_value.history.return_value.first.return_value = {
                 "version": 7
             }

@@ -34,7 +34,7 @@ which is correct: a missing fraud case record means the transaction was never
 flagged.
 
 Pipeline steps:
-  1. Resolve ``feature_date`` — from ``spark.gold.feature.date`` conf; yesterday by default.
+  1. Resolve ``feature_date`` from ``spark.gold.feature.date`` conf; else yesterday.
   2. Read Silver transactions filtered to the max look-back window
      [feature_date - 37, feature_date - 7] (delay + 30-day window).
   3. Left-join with Silver fraud_cases on ``transaction_id``; coalesce null → 0.
@@ -57,8 +57,7 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
-DELAY_DAYS = 7          # label delay offset (days)
-WINDOW_DAYS = [1, 7, 30]  # window sizes — must match api/models.py
+DELAY_DAYS = 7  # label delay offset (days)
 
 
 def build_spark_session() -> SparkSession:
@@ -82,6 +81,13 @@ def resolve_feature_date(spark: SparkSession) -> datetime.date:
 # ---------------------------------------------------------------------------
 # Load
 # ---------------------------------------------------------------------------
+
+
+def _attach_fraud_label(txn_df: DataFrame, fraud_df: DataFrame) -> DataFrame:
+    """Left-join transactions with fraud cases; missing entry → is_fraud = 0."""
+    return txn_df.join(fraud_df, on="transaction_id", how="left").withColumn(
+        "is_fraud", F.coalesce(F.col("is_fraud"), F.lit(0))
+    )
 
 
 def load_labeled_transactions(
@@ -118,11 +124,7 @@ def load_labeled_transactions(
         )
     )
 
-    return (
-        txn_df.join(fraud_df, on="transaction_id", how="left").withColumn(
-            "is_fraud", F.coalesce(F.col("is_fraud"), F.lit(0))
-        )
-    )
+    return _attach_fraud_label(txn_df, fraud_df)
 
 
 # ---------------------------------------------------------------------------
@@ -131,55 +133,62 @@ def load_labeled_transactions(
 
 
 def compute_terminal_features(
-    labeled_df: DataFrame, feature_date: datetime.date
+    spark: SparkSession, labeled_df: DataFrame, feature_date: datetime.date
 ) -> DataFrame:
     """One row per terminal with fraud-rate window features as of ``feature_date``.
 
-    Each window W covers [feature_date - (DELAY_DAYS + W), feature_date - DELAY_DAYS]
-    inclusive — the upper bound is already enforced by the Silver filter, so the
-    conditional aggregation only needs to gate on the lower bound.
+    Each window W covers [feature_date - (DELAY_DAYS + W), feature_date - DELAY_DAYS].
+    The upper bound is enforced by the Silver filter in load_labeled_transactions.
+    Zero-transaction windows get RISK = 0.0 via the CASE guard.
 
-    The two-step approach (aggregate → derive risk) avoids using an aggregation
-    Column expression inside F.when, which is not supported in a single agg() call.
+    Precondition: ``labeled_df`` must already be filtered to
+    ``event_date BETWEEN fd-37 AND fd-7``; future-dated rows will be
+    miscounted otherwise.
     """
-    fd = F.lit(feature_date).cast(T.DateType())
-
-    # Step 1: compute raw nb_tx and nb_fraud per window in one group-by pass.
-    agg_exprs = []
-    for days in WINDOW_DAYS:
-        # Lower bound of the W-day window:  fd - (DELAY + W)
-        # Example (delay=7, W=1): fd-8 ≤ event_date ≤ fd-7  →  1 day
-        cutoff = F.date_sub(fd, DELAY_DAYS + days)
-        in_window = F.col("event_date") >= cutoff
-        agg_exprs += [
-            F.count(F.when(in_window, F.lit(1))).alias(f"_nb_tx_{days}d"),
-            F.coalesce(
-                F.sum(F.when(in_window, F.col("is_fraud"))), F.lit(0)
-            )
-            .cast(T.LongType())
-            .alias(f"_nb_fraud_{days}d"),
-        ]
-
-    raw_df = labeled_df.groupBy("terminal_id").agg(*agg_exprs)
-
-    # Step 2: derive TERMINAL_RISK = nb_fraud / nb_tx; 0.0 when no transactions.
-    result = raw_df
-    for days in WINDOW_DAYS:
-        suffix = f"{days}DAY_WINDOW"
-        nb_tx_col = F.col(f"_nb_tx_{days}d")
-        nb_fraud_col = F.col(f"_nb_fraud_{days}d")
-        result = (
-            result.withColumn(f"TERMINAL_NB_TX_{suffix}", nb_tx_col)
-            .withColumn(
-                f"TERMINAL_RISK_{suffix}",
-                F.when(nb_tx_col > 0, (nb_fraud_col / nb_tx_col).cast(T.DoubleType())).otherwise(
-                    F.lit(0.0)
-                ),
-            )
-            .drop(f"_nb_tx_{days}d", f"_nb_fraud_{days}d")
+    labeled_df.createOrReplaceTempView("labeled_txn_terminal")
+    return spark.sql(f"""
+        WITH counts AS (
+            SELECT
+                terminal_id,
+                COUNT(
+                    CASE WHEN event_date >= date_sub(DATE '{feature_date}', {DELAY_DAYS + 1})
+                    THEN 1 END
+                ) AS nb_tx_1d,
+                COUNT(
+                    CASE WHEN event_date >= date_sub(DATE '{feature_date}', {DELAY_DAYS + 7})
+                    THEN 1 END
+                ) AS nb_tx_7d,
+                COUNT(
+                    CASE WHEN event_date >= date_sub(DATE '{feature_date}', {DELAY_DAYS + 30})
+                    THEN 1 END
+                ) AS nb_tx_30d,
+                SUM(
+                    CASE WHEN event_date >= date_sub(DATE '{feature_date}', {DELAY_DAYS + 1})
+                    THEN is_fraud ELSE 0 END
+                ) AS nb_fraud_1d,
+                SUM(
+                    CASE WHEN event_date >= date_sub(DATE '{feature_date}', {DELAY_DAYS + 7})
+                    THEN is_fraud ELSE 0 END
+                ) AS nb_fraud_7d,
+                SUM(
+                    CASE WHEN event_date >= date_sub(DATE '{feature_date}', {DELAY_DAYS + 30})
+                    THEN is_fraud ELSE 0 END
+                ) AS nb_fraud_30d,
+                DATE '{feature_date}' AS feature_date
+            FROM labeled_txn_terminal
+            GROUP BY terminal_id
         )
-
-    return result.withColumn("feature_date", fd)
+        SELECT
+            terminal_id,
+            nb_tx_1d AS TERMINAL_NB_TX_1DAY_WINDOW,
+            nb_tx_7d AS TERMINAL_NB_TX_7DAY_WINDOW,
+            nb_tx_30d AS TERMINAL_NB_TX_30DAY_WINDOW,
+            CASE WHEN nb_tx_1d > 0 THEN nb_fraud_1d * 1.0 / nb_tx_1d ELSE 0.0 END AS TERMINAL_RISK_1DAY_WINDOW,
+            CASE WHEN nb_tx_7d > 0 THEN nb_fraud_7d * 1.0 / nb_tx_7d ELSE 0.0 END AS TERMINAL_RISK_7DAY_WINDOW,
+            CASE WHEN nb_tx_30d > 0 THEN nb_fraud_30d * 1.0 / nb_tx_30d ELSE 0.0 END AS TERMINAL_RISK_30DAY_WINDOW,
+            feature_date
+        FROM counts
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +209,6 @@ def write_gold_partition(
     reruns are fully idempotent.  On first run (table absent) falls back to
     a plain partitioned write that creates the Delta table from scratch.
     """
-    row_count = df.count()
-
     writer = df.write.format("delta").mode("overwrite")
     if DeltaTable.isDeltaTable(spark, gold_path):
         writer = writer.option("replaceWhere", f"feature_date = '{feature_date}'")
@@ -209,7 +216,7 @@ def write_gold_partition(
         writer = writer.partitionBy("feature_date")
 
     writer.save(gold_path)
-    print(f"[gold] {label}: {row_count:,} rows for feature_date={feature_date} → {gold_path}")
+    print(f"[gold] {label}: feature_date={feature_date} → {gold_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -226,7 +233,7 @@ def main() -> None:
 
     feature_date = resolve_feature_date(spark)
     # Max look-back = delay + max_window = 7 + 30 = 37 days
-    lookback_start = feature_date - datetime.timedelta(days=DELAY_DAYS + max(WINDOW_DAYS))
+    lookback_start = feature_date - datetime.timedelta(days=DELAY_DAYS + 30)
     delay_end = feature_date - datetime.timedelta(days=DELAY_DAYS)
 
     print(
@@ -237,8 +244,10 @@ def main() -> None:
     labeled_df = load_labeled_transactions(
         spark, silver_txn_path, silver_fraud_path, lookback_start, delay_end
     )
-    terminal_df = compute_terminal_features(labeled_df, feature_date)
-    write_gold_partition(spark, terminal_df, gold_path, feature_date, "terminal_features")
+    terminal_df = compute_terminal_features(spark, labeled_df, feature_date)
+    write_gold_partition(
+        spark, terminal_df, gold_path, feature_date, "terminal_features"
+    )
 
 
 if __name__ == "__main__":

@@ -1,30 +1,10 @@
-"""CDC fraud cases normalize-merge to Silver: Bronze Delta (CDF) → Silver Delta.
+"""Silver fraud_cases batch job: Bronze Delta (CDF) → Silver Delta.
 
-Reads new Bronze fraud_cases CDC rows incrementally via Delta Change Data Feed,
-normalises them into canonical Silver rows, and MERGEs the result into a
-partitioned Silver Delta table.
+Reads new CDC rows incrementally via Delta Change Data Feed, normalises them,
+and MERGEs the result into a Silver Delta table.
 
-``is_fraud`` is derived in Silver (not kept as a raw column) so all downstream
-consumers — Gold terminal features, training dataset, reporting — can read a
-single clean boolean without reimplementing the business rule:
-
-  is_fraud = 1  iff  case_status = 'confirmed' AND resolved_at IS NOT NULL
-  is_fraud = 0  otherwise (open, dismissed, or not yet resolved)
-
-CDC lifecycle:
-  - INSERT when investigation opens (resolved_at NULL, case_status='open')
-  - UPDATE when investigation closes (resolved_at set,
-    case_status='confirmed'/'dismissed')
-  - Silver MERGE keeps the latest version per case_id (LSN-ordered)
-
-Incremental state is tracked by the shared Delta watermark table
-(``spark.silver.fraud_cases.watermark.path``).
-
-Run:
-    spark-submit /opt/silver/cdc_fraud_cases_normalize_merge_silver.py
-
-All configuration is loaded from spark-defaults.conf
-(``spark.silver.fraud_cases.*`` namespace).
+``is_fraud`` is derived in Silver: case_status='confirmed' AND resolved_at IS NOT NULL.
+All configuration from spark-defaults.conf (``spark.silver.fraud_cases.*``).
 """
 from __future__ import annotations
 
@@ -52,11 +32,7 @@ def build_spark_session() -> SparkSession:
 def cast_types(df: DataFrame) -> DataFrame:
     """Cast Bronze raw types to Silver canonical types and derive is_fraud.
 
-    is_fraud encodes the business outcome so all consumers read a single
-    authoritative column instead of re-evaluating case_status + resolved_at.
-
-    _lsn is kept in Silver for cross-batch MERGE ordering (same pattern as
-    the transactions Silver job).
+    is_fraud = True iff case_status = 'confirmed' AND resolved_at IS NOT NULL.
     """
     return (
         df.withColumn("reported_at", F.to_timestamp("reported_at"))
@@ -95,10 +71,7 @@ def cast_types(df: DataFrame) -> DataFrame:
 def validate_and_split(df: DataFrame) -> tuple[DataFrame, DataFrame]:
     """Split rows into (valid_df, quarantine_df).
 
-    Minimum validity rules:
-      - case_id must not be null (primary key)
-      - transaction_id must not be null (foreign key to transactions)
-      - reported_at must not be null (investigation open timestamp)
+    Rules: case_id, transaction_id, and reported_at must not be null.
     """
     null_case_id = F.col("case_id").isNull()
     null_txn_id = F.col("transaction_id").isNull()
@@ -120,15 +93,11 @@ def validate_and_split(df: DataFrame) -> tuple[DataFrame, DataFrame]:
 
 
 def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
-    """Append invalid rows to the quarantine Delta table (audit log, never MERGE)."""
+    """Append invalid rows to the quarantine Delta table (audit log)."""
     if quarantine_df.isEmpty():
         return
-    bad_count = quarantine_df.count()
     quarantine_df.write.format("delta").mode("append").save(quarantine_path)
-    print(
-        f"[silver-fraud_cases] quarantined {bad_count:,} bad rows → "
-        f"{quarantine_path}"
-    )
+    print(f"[silver-fraud_cases] quarantined bad rows → {quarantine_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -137,11 +106,9 @@ def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
 
 
 def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) -> None:
-    """Deduplicate by LSN and MERGE into the Silver fraud_cases Delta table.
+    """Deduplicate by LSN within batch.
 
-    Same LSN-guard pattern as the transactions Silver job: only update/delete
-    when the incoming event is at least as fresh as the current Silver row,
-    preventing late Bronze files from overwriting newer Silver state.
+    MERGE into the Silver fraud_cases Delta table.
     """
     window = W.Window.partitionBy("case_id").orderBy(
         F.desc("_lsn"), F.desc("_source_ts")
@@ -152,8 +119,6 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
         .drop("_rn")
     )
 
-    good_count = dedup_df.count()
-
     if DeltaTable.isDeltaTable(spark, silver_path):
         (
             DeltaTable.forPath(spark, silver_path)
@@ -162,20 +127,11 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
                 dedup_df.alias("bronze"),
                 "silver.case_id = bronze.case_id",
             )
-            .whenMatchedDelete(
-                condition="bronze._cdc_op = 'd'"
-                " AND (silver._lsn IS NULL OR bronze._lsn >= silver._lsn)"
-            )
-            # Update only when the incoming event is as fresh or fresher than Silver.
-            .whenMatchedUpdateAll(
-                condition="bronze._cdc_op != 'd'"
-                " AND (silver._lsn IS NULL OR bronze._lsn >= silver._lsn)"
-            )
+            .whenMatchedUpdateAll(condition="bronze._cdc_op != 'd'")
             .whenNotMatchedInsertAll(condition="bronze._cdc_op != 'd'")
             .execute()
         )
     else:
-        # First run: partition by reported_at date
         (
             dedup_df.filter(F.col("_cdc_op") != "d")
             .withColumn("reported_date", F.to_date("reported_at"))
@@ -184,7 +140,7 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
             .save(silver_path)
         )
 
-    print(f"[silver-fraud_cases] merged {good_count:,} rows → {silver_path}")
+    print(f"[silver-fraud_cases] merged rows → {silver_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -199,13 +155,6 @@ def main() -> None:
     silver_path = spark.conf.get("spark.silver.fraud_cases.output.path")
     quarantine_path = spark.conf.get("spark.silver.fraud_cases.quarantine.path")
     watermark_path = spark.conf.get("spark.silver.fraud_cases.watermark.path")
-
-    if not DeltaTable.isDeltaTable(spark, bronze_path):
-        raise RuntimeError(
-            f"Bronze path {bronze_path!r} is not a Delta table. "
-            "Ensure the Bronze streaming job has been updated to write Delta "
-            "format and at least one micro-batch has been committed."
-        )
 
     last_version: int | None = read_watermark(spark, watermark_path, JOB_NAME)
     current_version = int(
@@ -223,30 +172,15 @@ def main() -> None:
     start_version = 0 if last_version is None else last_version + 1
     print(f"[{JOB_NAME}] reading Bronze CDF versions {start_version}–{current_version}")
 
-    try:
-        bronze_df = (
-            spark.read.format("delta")
-            .option("readChangeFeed", "true")
-            .option("startingVersion", start_version)
-            .option("endingVersion", current_version)
-            .load(bronze_path)
-            .filter(F.col("_change_type") == "insert")
-            .drop(*_CDF_META_COLS)
-        )
-    except Exception as exc:
-        msg = str(exc)
-        if "outside the range" in msg or "is not enabled" in msg:
-            raise RuntimeError(
-                f"Bronze CDF read failed for {JOB_NAME}: {msg}. "
-                "If startingVersion is outside log retention, reset the "
-                f"watermark by deleting the '{JOB_NAME}' row from "
-                f"{watermark_path!r} and re-run."
-            ) from exc
-        raise
-
-    if bronze_df.isEmpty():
-        print(f"[{JOB_NAME}] CDF returned 0 insert rows, exiting.")
-        return
+    bronze_df = (
+        spark.read.format("delta")
+        .option("readChangeFeed", "true")
+        .option("startingVersion", start_version)
+        .option("endingVersion", current_version)
+        .load(bronze_path)
+        .filter(F.col("_change_type") == "insert")
+        .drop(*_CDF_META_COLS)
+    )
 
     typed_df = cast_types(bronze_df)
     valid_df, quarantine_df = validate_and_split(typed_df)

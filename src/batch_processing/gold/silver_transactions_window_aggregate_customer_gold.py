@@ -38,10 +38,6 @@ import datetime
 from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql import types as T
-
-# Window sizes (days) — must match the feature names in api/models.py
-WINDOW_DAYS = [1, 7, 30]
 
 
 def build_spark_session() -> SparkSession:
@@ -68,37 +64,52 @@ def resolve_feature_date(spark: SparkSession) -> datetime.date:
 
 
 def compute_customer_features(
-    silver_df: DataFrame, feature_date: datetime.date
+    spark: SparkSession, silver_df: DataFrame, feature_date: datetime.date
 ) -> DataFrame:
     """One row per customer with rolling window features as of ``feature_date``.
 
-    Windows [feature_date - (N-1), feature_date] inclusive give exactly N days.
-    A single group-by pass computes all window sizes via conditional aggregation.
-    Null avg (customer with zero transactions in a window) is coalesced to 0.0
-    to match the notebook's ``.fillna(0)`` treatment.
+    Windows: 1D=[fd, fd], 7D=[fd-6, fd], 30D=[fd-29, fd].
+    Null avg (no transactions in a window) is coalesced to 0.0 to match .fillna(0).
+
+    Precondition: ``silver_df`` must already be filtered to
+    ``event_date BETWEEN fd-29 AND fd``; future-dated rows will be
+    miscounted otherwise.
     """
-    fd = F.lit(feature_date).cast(T.DateType())
-
-    agg_exprs = []
-    for days in WINDOW_DAYS:
-        # date_sub(fd, days-1): first day of the N-day window
-        # 1d → fd-0 = fd (today only)
-        # 7d → fd-6  (last 7 days)
-        # 30d → fd-29 (last 30 days)
-        cutoff = F.date_sub(fd, days - 1)
-        in_window = F.col("event_date") >= cutoff
-        suffix = f"WINDOW_{days}D"
-        agg_exprs += [
-            F.count(F.when(in_window, F.lit(1))).alias(
-                f"CUSTOMER_NUMBER_OF_TRANSACTIONS_{suffix}"
-            ),
-            F.coalesce(
-                F.avg(F.when(in_window, F.col("amount"))).cast(T.DecimalType(18, 2)),
-                F.lit(0).cast(T.DecimalType(18, 2)),
-            ).alias(f"CUSTOMER_AVG_AMOUNT_{suffix}"),
-        ]
-
-    return silver_df.groupBy("customer_id").agg(*agg_exprs).withColumn("feature_date", fd)
+    silver_df.createOrReplaceTempView("silver_txn_customer")
+    return spark.sql(f"""
+        SELECT
+            customer_id,
+            COUNT(CASE WHEN event_date >= date_sub(DATE '{feature_date}', 0)
+                THEN 1 END)
+                AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D,
+            COALESCE(
+                AVG(CASE WHEN event_date >= date_sub(DATE '{feature_date}', 0)
+                    THEN amount END),
+                0
+            )
+                AS CUSTOMER_AVG_AMOUNT_WINDOW_1D,
+            COUNT(CASE WHEN event_date >= date_sub(DATE '{feature_date}', 6)
+                THEN 1 END)
+                AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D,
+            COALESCE(
+                AVG(CASE WHEN event_date >= date_sub(DATE '{feature_date}', 6)
+                    THEN amount END),
+                0
+            )
+                AS CUSTOMER_AVG_AMOUNT_WINDOW_7D,
+            COUNT(CASE WHEN event_date >= date_sub(DATE '{feature_date}', 29)
+                THEN 1 END)
+                AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D,
+            COALESCE(
+                AVG(CASE WHEN event_date >= date_sub(DATE '{feature_date}', 29)
+                    THEN amount END),
+                0
+            )
+                AS CUSTOMER_AVG_AMOUNT_WINDOW_30D,
+            DATE '{feature_date}' AS feature_date
+        FROM silver_txn_customer
+        GROUP BY customer_id
+    """)
 
 
 # ---------------------------------------------------------------------------
@@ -120,16 +131,13 @@ def write_gold_partition(
     On first run the table does not yet exist: fall back to a plain
     partitioned write that creates the Delta table from scratch.
     """
-    row_count = df.count()
-
     writer = df.write.format("delta").mode("overwrite")
     if DeltaTable.isDeltaTable(spark, gold_path):
         writer = writer.option("replaceWhere", f"feature_date = '{feature_date}'")
     else:
         writer = writer.partitionBy("feature_date")
-
     writer.save(gold_path)
-    print(f"[gold] {label}: {row_count:,} rows for feature_date={feature_date} → {gold_path}")
+    print(f"[gold] {label}: feature_date={feature_date} → {gold_path}")
 
 
 # ---------------------------------------------------------------------------
@@ -162,8 +170,10 @@ def main() -> None:
         .select("customer_id", "event_date", "amount")
     )
 
-    customer_df = compute_customer_features(silver_df, feature_date)
-    write_gold_partition(spark, customer_df, gold_path, feature_date, "customer_features")
+    customer_df = compute_customer_features(spark, silver_df, feature_date)
+    write_gold_partition(
+        spark, customer_df, gold_path, feature_date, "customer_features"
+    )
 
 
 if __name__ == "__main__":

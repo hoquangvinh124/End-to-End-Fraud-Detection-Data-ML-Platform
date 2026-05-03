@@ -134,6 +134,13 @@ with DAG(
             extra_conf={"spark.gold.feature.date": "{{ ds }}"},
         )
 
+        assemble_ml_features = spark_task(
+            task_id="assemble_ml_features",
+            script="/opt/gold/silver_transactions_ml_features_gold.py",
+            dag=dag,
+            extra_conf={"spark.gold.feature.date": "{{ ds }}"},
+        )
+
     # ── Dependencies ──────────────────────────────────────────────────────
     ingest_transactions >> normalize_transactions
     ingest_fraud_cases >> normalize_fraud_cases
@@ -143,3 +150,6 @@ with DAG(
 
     # Terminal features need BOTH Silver tables (transactions + fraud labels)
     [normalize_transactions, normalize_fraud_cases] >> aggregate_terminal_features
+
+    # ML features table needs both Gold partitions to be ready
+    [aggregate_customer_features, aggregate_terminal_features] >> assemble_ml_features

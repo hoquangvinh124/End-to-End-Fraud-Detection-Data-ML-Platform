@@ -7,8 +7,8 @@ Runs every day at 02:00 UTC and processes CDC data for the previous calendar day
 
 Dependency graph:
 
-  bronze.ingest_transactions ──► silver.normalize_transactions ──► gold.aggregate_customer_features
-                                                                ──► gold.aggregate_terminal_features
+  bronze.ingest_transactions ──► silver.normalize_transactions ──► gold.aggregate_customer_features ──┐
+                                                                ──► gold.aggregate_terminal_features ──► gold.assemble_ml_features
   bronze.ingest_fraud_cases  ──► silver.normalize_fraud_cases  ──►/
 
 Each task runs a Docker container from the batch image (``SPARK_BATCH_IMAGE``

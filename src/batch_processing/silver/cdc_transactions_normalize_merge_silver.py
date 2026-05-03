@@ -18,7 +18,7 @@ JOB_NAME = "silver-transactions"
 
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName("silver-transactions-batch").getOrCreate()
+    return SparkSession.builder.appName(f"{JOB_NAME}-batch").getOrCreate()
 
 
 # ---------------------------------------------------------------------------

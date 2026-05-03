@@ -55,11 +55,14 @@ def resolve_feature_date(spark: SparkSession) -> datetime.date:
     Defaults to yesterday so the job runs standalone without Airflow.
     """
     raw = spark.conf.get("spark.gold.feature.date", "").strip()
-    return (
-        datetime.date.fromisoformat(raw)
-        if raw
-        else datetime.date.today() - datetime.timedelta(days=1)
-    )
+    if not raw:
+        return datetime.date.today() - datetime.timedelta(days=1)
+    try:
+        return datetime.date.fromisoformat(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"spark.gold.feature.date must be YYYY-MM-DD, got: {raw!r}"
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +87,7 @@ def load_silver_transactions(
             "customer_id",
             "terminal_id",
             "event_timestamp",
-            F.col("amount").cast(T.DecimalType(18, 2)).alias("amount"),
+            F.col("amount").cast(T.DoubleType()).alias("amount"),
             F.col("is_weekend").cast(T.BooleanType()).alias("is_weekend"),
             F.col("is_night").cast(T.BooleanType()).alias("is_night"),
         )

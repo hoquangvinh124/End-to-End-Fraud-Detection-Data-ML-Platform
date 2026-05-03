@@ -6,7 +6,6 @@ column renaming, null defaults), write_gold_partition (first-run vs replaceWhere
 from __future__ import annotations
 
 import datetime
-from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -24,7 +23,7 @@ _TXN_SCHEMA = T.StructType([
     T.StructField("customer_id", T.StringType()),
     T.StructField("terminal_id", T.StringType()),
     T.StructField("event_timestamp", T.TimestampType()),
-    T.StructField("amount", T.DecimalType(18, 2)),
+    T.StructField("amount", T.DoubleType()),
     T.StructField("is_weekend", T.BooleanType()),
     T.StructField("is_night", T.BooleanType()),
 ])
@@ -68,7 +67,7 @@ def _make_txn(spark, txn_id=1, customer_id="C001", terminal_id="T001",
               amount="100.00", is_weekend=False, is_night=False):
     ts = datetime.datetime(2024, 1, 15, 10, 0, 0)
     return spark.createDataFrame(
-        [(txn_id, customer_id, terminal_id, ts, Decimal(amount), is_weekend, is_night)],
+        [(txn_id, customer_id, terminal_id, ts, float(amount), is_weekend, is_night)],
         schema=_TXN_SCHEMA,
     )
 
@@ -248,8 +247,8 @@ class TestAssembleMlFeatures:
         """Join must not multiply rows even with multiple customers on same terminal."""
         txn_df = spark.createDataFrame(
             [
-                (1, "C001", "T001", datetime.datetime(2024, 1, 15), Decimal("100.00"), False, False),
-                (2, "C002", "T001", datetime.datetime(2024, 1, 15), Decimal("200.00"), False, False),
+                (1, "C001", "T001", datetime.datetime(2024, 1, 15), 100.00, False, False),
+                (2, "C002", "T001", datetime.datetime(2024, 1, 15), 200.00, False, False),
             ],
             schema=_TXN_SCHEMA,
         )

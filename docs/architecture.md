@@ -25,10 +25,11 @@
 - **DataHub**: central metadata store (PostgreSQL) for data catalog, schema registry, feature definitions
 
 ### Feature Store (green section)
-- **Feast**: feature store
-  - Offline store: **PostgreSQL**
+- **Feast**: feature store (`src/feature_store/`)
+  - Offline store: **file** (reads Gold Delta Parquet files from MinIO via S3 FileSource)
   - Online store: **Redis** (<10ms lookup)
-- **Kafka → Feast push service → Redis**: real-time feature refresh
+  - Three feature views: `fraud_ml_features_view` (offline, training), `customer_features_view` + `terminal_features_view` (online+offline)
+  - Nightly materialization: `materialize_to_redis.py` called by Airflow BashOperator after `assemble_ml_features`
 
 ### Training & Registry (green section)
 - **MLflow**: experiment tracking + model registry
@@ -54,7 +55,7 @@
 - OTel auto-instrumentation
 
 ### Storage (shared)
-- PostgreSQL: 1 instance, multiple DBs (mlflow_db, airflow_db, feast_db)
+- PostgreSQL: 1 instance, multiple DBs (mlflow_db, airflow_db)
 - Redis: standalone (Feast online store)
 - MinIO: data lake (Delta Lake tables, raw data)
 - GCS: MLflow artifacts, model registry

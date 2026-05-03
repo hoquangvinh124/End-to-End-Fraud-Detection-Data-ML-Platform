@@ -8,7 +8,7 @@ Runs every day at 02:00 UTC and processes CDC data for the previous calendar day
 Dependency graph:
 
   bronze.ingest_transactions ──► silver.normalize_transactions ──► gold.aggregate_customer_features ──┐
-                                                                ──► gold.aggregate_terminal_features ──► gold.assemble_ml_features
+                                                                ──► gold.aggregate_terminal_features ──► gold.assemble_ml_features ──► feast.materialize_online_features
   bronze.ingest_fraud_cases  ──► silver.normalize_fraud_cases  ──►/
 
 Each task runs a Docker container from the batch image (``SPARK_BATCH_IMAGE``
@@ -28,6 +28,7 @@ from __future__ import annotations
 import pendulum
 from airflow import DAG
 from airflow.models import Variable
+from airflow.operators.bash import BashOperator
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.utils.task_group import TaskGroup
 
@@ -141,6 +142,16 @@ with DAG(
             extra_conf={"spark.gold.feature.date": "{{ ds }}"},
         )
 
+    # ── Feast ──────────────────────────────────────────────────────────────
+    materialize_online_features = BashOperator(
+        task_id="materialize_online_features",
+        bash_command="python src/feature_store/materialize_to_redis.py",
+        dag=dag,
+        retries=2,
+        retry_delay=pendulum.duration(minutes=5),
+        execution_timeout=pendulum.duration(minutes=30),
+    )
+
     # ── Dependencies ──────────────────────────────────────────────────────
     ingest_transactions >> normalize_transactions
     ingest_fraud_cases >> normalize_fraud_cases
@@ -153,3 +164,5 @@ with DAG(
 
     # ML features table needs both Gold partitions to be ready
     [aggregate_customer_features, aggregate_terminal_features] >> assemble_ml_features
+
+    assemble_ml_features >> materialize_online_features

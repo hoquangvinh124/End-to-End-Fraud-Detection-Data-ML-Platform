@@ -25,6 +25,8 @@ Airflow Variables (set in Admin → Variables or via CLI):
 """
 from __future__ import annotations
 
+import pathlib
+
 import pendulum
 from airflow import DAG
 from airflow.models import Variable
@@ -32,9 +34,11 @@ from airflow.operators.bash import BashOperator
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.utils.task_group import TaskGroup
 
-# ---------------------------------------------------------------------------
-# Runtime configuration — set in Airflow UI: Admin → Variables
-# ---------------------------------------------------------------------------
+# Absolute path to materialize script — resolved relative to this DAG file so it works
+# in any deployment (local, Docker Compose, GKE) as long as the repo layout is preserved.
+_MATERIALIZE_SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "feature_store" / "materialize_to_redis.py"
+
+
 
 SPARK_IMAGE = Variable.get("SPARK_BATCH_IMAGE", default_var="mlops-batch:latest")
 DOCKER_NETWORK = Variable.get("DOCKER_NETWORK", default_var="mlops_default")
@@ -145,7 +149,7 @@ with DAG(
     # ── Feast ──────────────────────────────────────────────────────────────
     materialize_online_features = BashOperator(
         task_id="materialize_online_features",
-        bash_command="python src/feature_store/materialize_to_redis.py",
+        bash_command=f"uv run python {_MATERIALIZE_SCRIPT}",
         dag=dag,
         retries=2,
         retry_delay=pendulum.duration(minutes=5),

@@ -62,6 +62,10 @@ def test_customer_features_view_feature_names():
     assert {f.name for f in customer_features_view.schema} == expected
 
 
+def test_customer_features_view_is_online():
+    assert customer_features_view.online is True
+
+
 # --- terminal_features_view ---
 
 def test_terminal_features_view_name():
@@ -82,3 +86,7 @@ def test_terminal_features_view_feature_names():
         "TERMINAL_NB_TX_30DAY_WINDOW",
     }
     assert {f.name for f in terminal_features_view.schema} == expected
+
+
+def test_terminal_features_view_is_online():
+    assert terminal_features_view.online is True

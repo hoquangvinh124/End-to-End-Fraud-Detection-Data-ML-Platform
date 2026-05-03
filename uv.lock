@@ -1783,13 +1783,11 @@ dev = [
 dev = [
     { name = "catboost" },
     { name = "delta-spark" },
-    { name = "delta-spark" },
     { name = "httpx" },
     { name = "lightgbm" },
     { name = "matplotlib" },
     { name = "optuna" },
     { name = "psycopg", extra = ["binary"] },
-    { name = "pyspark" },
     { name = "pyspark" },
     { name = "pytest" },
     { name = "pytest-cov" },

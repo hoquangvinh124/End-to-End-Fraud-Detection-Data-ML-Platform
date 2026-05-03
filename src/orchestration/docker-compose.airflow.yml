@@ -12,6 +12,10 @@
 #                          run: docker network ls --filter name=default
 #                          e.g. cdc_default or mlops_default
 #
+# CDC ingestion (continuous Structured Streaming) runs separately:
+#   docker compose -f src/cdc_ingestion/docker-compose.cdc_ingestion.yml up -d
+#   This requires a CDC_INGESTION_IMAGE built from src/cdc_ingestion/Dockerfile
+#
 # The DockerOperator mounts /var/run/docker.sock so tasks launch containers
 # directly on the host Docker daemon (same daemon as Kafka/MinIO).
 

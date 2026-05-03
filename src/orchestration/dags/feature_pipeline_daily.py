@@ -89,17 +89,17 @@ with DAG(
     doc_md=__doc__,
 ) as dag:
 
-    # ── Bronze ────────────────────────────────────────────────────────────
-    with TaskGroup("bronze") as bronze_group:
+    # ── CDC Ingestion ────────────────────────────────────────────────────────────
+    with TaskGroup("cdc_ingestion") as cdc_ingestion_group:
         ingest_transactions = spark_task(
             task_id="ingest_transactions",
-            script="/opt/bronze/cdc_transactions_to_bronze.py",
+            script="/opt/cdc_ingestion/cdc_transactions_to_bronze.py",
             dag=dag,
         )
 
         ingest_fraud_cases = spark_task(
             task_id="ingest_fraud_cases",
-            script="/opt/bronze/cdc_fraud_cases_to_bronze.py",
+            script="/opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py",
             dag=dag,
         )
 

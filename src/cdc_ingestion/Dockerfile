@@ -13,15 +13,13 @@ RUN PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,org.apache.spark:
     find /tmp/ivy/jars -name "*.jar" -exec cp {} /opt/spark/jars/ \; && \
     rm -rf /tmp/ivy /tmp/noop.py
 
-# Bake job configuration into the image — Spark auto-loads this on startup.
+# Bake job configuration into the image
 COPY spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 
-# Bake all job scripts into the image so no volume mounts are needed at runtime.
-COPY silver/ /opt/silver/
-COPY gold/ /opt/gold/
-COPY utils/ /opt/utils/
+# Bake CDC ingestion job scripts into the image
+COPY cdc_transactions_to_bronze.py /opt/cdc_ingestion/cdc_transactions_to_bronze.py
+COPY cdc_fraud_cases_to_bronze.py /opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py
 
-# Add /opt to PYTHONPATH so Silver/Gold jobs can import utils.* at runtime.
 ENV PYTHONPATH /opt
 
 USER spark

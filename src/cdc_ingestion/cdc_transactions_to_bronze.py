@@ -7,17 +7,59 @@ Parquet files to the MinIO bronze bucket on a configurable micro-batch trigger.
 All configuration is loaded from spark-defaults.conf (baked into the image at
 $SPARK_HOME/conf/spark-defaults.conf). Job parameters live under the
 ``spark.bronze.*`` namespace — change the conf file to tune the job.
+
+The job also boots the Hive metastore catalog entry for the Bronze Delta path so
+the data is queryable through Spark SQL and Trino.
 """
 from __future__ import annotations
+
+from textwrap import dedent
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
 from utils.schema_registry_helpers import fetch_avro_schema
 
+HIVE_METASTORE_URI = "thrift://hive-metastore:9083"
+BRONZE_DATABASE = "banking"
+BRONZE_TABLE = "transactions_bronze"
+BRONZE_TABLE_FQN = f"{BRONZE_DATABASE}.{BRONZE_TABLE}"
+
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName("cdc-transactions-to-bronze").getOrCreate()
+    return (
+        SparkSession.builder.appName("cdc-transactions-to-bronze")
+        .enableHiveSupport()
+        .config("spark.hadoop.hive.metastore.uris", HIVE_METASTORE_URI)
+        .getOrCreate()
+    )
+
+
+def ensure_banking_database(spark: SparkSession) -> None:
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS {BRONZE_DATABASE}")
+
+
+def register_transactions_external_table(
+    spark: SparkSession, output_path: str
+) -> None:
+    spark.sql(
+        dedent(
+            f"""
+            CREATE TABLE IF NOT EXISTS {BRONZE_TABLE_FQN}
+            USING DELTA
+            LOCATION '{output_path}'
+            TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
+    spark.sql(
+        dedent(
+            f"""
+            ALTER TABLE {BRONZE_TABLE_FQN}
+            SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -89,6 +131,9 @@ def main() -> None:
     checkpoint_path = spark.conf.get("spark.bronze.checkpoint.path")
     trigger_interval = spark.conf.get("spark.bronze.trigger.interval")
     sr_url = spark.conf.get("spark.bronze.schema.registry.url")
+
+    ensure_banking_database(spark)
+    register_transactions_external_table(spark, output_path)
 
     avro_schema_str = fetch_avro_schema(sr_url, f"{topic}-value")
 

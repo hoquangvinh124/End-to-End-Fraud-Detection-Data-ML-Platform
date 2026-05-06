@@ -7,6 +7,7 @@ All configuration from spark-defaults.conf (``spark.silver.*`` namespace).
 """
 from __future__ import annotations
 
+from functools import partial
 from textwrap import dedent
 
 from delta.tables import DeltaTable
@@ -153,26 +154,27 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
 # ---------------------------------------------------------------------------
 
 
-def make_process_batch(
-    spark: SparkSession, silver_path: str, quarantine_path: str
-):
-    """Return a foreachBatch handler for the Silver transactions stream."""
-
-    def process_batch(batch_df: DataFrame, batch_id: int) -> None:  # noqa: ARG001
-        clean_df = (
-            batch_df
-            .filter(F.col("_change_type") == "insert")
-            .drop(*_CDF_META_COLS)
-        )
-        if clean_df.isEmpty():
-            return
-        typed_df = cast_types(clean_df)
-        valid_df, quarantine_df = validate_and_split(typed_df)
-        write_quarantine(quarantine_path, quarantine_df)
-        merge_to_silver(spark, silver_path, valid_df)
-        print(f"[{JOB_NAME}] batch {batch_id} processed.")
-
-    return process_batch
+def process_batch(
+    batch_df: DataFrame,
+    batch_id: int,  # noqa: ARG001
+    *,
+    spark: SparkSession,
+    silver_path: str,
+    quarantine_path: str,
+) -> None:
+    """foreachBatch handler for the Silver transactions stream."""
+    clean_df = (
+        batch_df
+        .filter(F.col("_change_type") == "insert")
+        .drop(*_CDF_META_COLS)
+    )
+    if clean_df.isEmpty():
+        return
+    typed_df = cast_types(clean_df)
+    valid_df, quarantine_df = validate_and_split(typed_df)
+    write_quarantine(quarantine_path, quarantine_df)
+    merge_to_silver(spark, silver_path, valid_df)
+    print(f"[{JOB_NAME}] batch {batch_id} processed.")
 
 
 def main() -> None:
@@ -192,7 +194,7 @@ def main() -> None:
         .load(bronze_path)
         .writeStream
         .trigger(availableNow=True)
-        .foreachBatch(make_process_batch(spark, silver_path, quarantine_path))
+        .foreachBatch(partial(process_batch, spark=spark, silver_path=silver_path, quarantine_path=quarantine_path))
         .option("checkpointLocation", checkpoint_path)
         .start()
         .awaitTermination()

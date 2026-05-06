@@ -35,7 +35,7 @@ class TestRegisterTransactionsSilverTable:
         assert any("delta.enableChangeDataFeed" in s for s in sql_calls)
 
 
-class TestMakeProcessBatch:
+class TestProcessBatch:
     def test_filters_inserts_and_calls_pipeline(self):
         spark = MagicMock()
         silver_path = "s3a://silver/transactions"
@@ -49,6 +49,7 @@ class TestMakeProcessBatch:
         mock_quarantine_df = MagicMock()
 
         with (
+            patch(f"{MODULE}.F"),
             patch(f"{MODULE}.cast_types", return_value=mock_typed) as mock_cast,
             patch(f"{MODULE}.validate_and_split", return_value=(mock_valid, mock_quarantine_df)) as mock_split,
             patch(f"{MODULE}.write_quarantine") as mock_wq,
@@ -57,12 +58,12 @@ class TestMakeProcessBatch:
             from batch_processing.silver import (
                 cdc_transactions_normalize_merge_silver as silver_mod,
             )
+            from functools import partial
 
             batch_df = MagicMock()
             batch_df.filter.return_value.drop.return_value = mock_clean
 
-            handler = silver_mod.make_process_batch(spark, silver_path, quarantine_path)
-            handler(batch_df, 0)
+            partial(silver_mod.process_batch, spark=spark, silver_path=silver_path, quarantine_path=quarantine_path)(batch_df, 0)
 
         batch_df.filter.assert_called_once()
         mock_cast.assert_called_once_with(mock_clean)
@@ -74,12 +75,14 @@ class TestMakeProcessBatch:
         spark = MagicMock()
 
         with (
+            patch(f"{MODULE}.F"),
             patch(f"{MODULE}.cast_types") as mock_cast,
             patch(f"{MODULE}.merge_to_silver") as mock_merge,
         ):
             from batch_processing.silver import (
                 cdc_transactions_normalize_merge_silver as silver_mod,
             )
+            from functools import partial
 
             mock_clean = MagicMock()
             mock_clean.isEmpty.return_value = True
@@ -87,8 +90,7 @@ class TestMakeProcessBatch:
             batch_df = MagicMock()
             batch_df.filter.return_value.drop.return_value = mock_clean
 
-            handler = silver_mod.make_process_batch(spark, "s3a://silver/transactions", "s3a://quarantine")
-            handler(batch_df, 0)
+            partial(silver_mod.process_batch, spark=spark, silver_path="s3a://silver/transactions", quarantine_path="s3a://quarantine")(batch_df, 0)
 
         mock_cast.assert_not_called()
         mock_merge.assert_not_called()
@@ -99,7 +101,7 @@ class TestMain:
         with (
             patch(f"{MODULE}.build_spark_session") as mock_build,
             patch(f"{MODULE}.register_transactions_silver_table") as mock_reg,
-            patch(f"{MODULE}.make_process_batch"),
+            patch(f"{MODULE}.partial"),
         ):
             spark = mock_build.return_value
             spark.conf.get.side_effect = lambda k: {

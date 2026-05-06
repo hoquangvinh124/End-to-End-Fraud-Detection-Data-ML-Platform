@@ -10,7 +10,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
-from utils.watermark import read_watermark, write_watermark
+from utils.watermark import read_watermark
 
 _CDF_META_COLS = ("_change_type", "_commit_version", "_commit_timestamp")
 
@@ -18,7 +18,14 @@ JOB_NAME = "silver-transactions"
 
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName(f"{JOB_NAME}-batch").getOrCreate()
+    return SparkSession.builder \
+                .appName(f"{JOB_NAME}-batch") \
+                .enableHiveSupport() \
+                .getOrCreate()
+
+
+def ensure_banking_database(spark: SparkSession) -> None:
+    spark.sql("CREATE DATABASE IF NOT EXISTS banking")
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +111,12 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
             .execute()
         )
     else:
-        batch_df.write.format("delta").partitionBy("event_date").save(silver_path)
+        (
+            batch_df.write.format("delta")
+            .mode("overwrite")
+            .partitionBy("event_date")
+            .save(silver_path)
+        )
     print(f"[{JOB_NAME}] merged rows → {silver_path}")
 
 
@@ -115,6 +127,7 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
 
 def main() -> None:
     spark = build_spark_session()
+    ensure_banking_database(spark)
 
     bronze_path = spark.conf.get("spark.silver.bronze.input.path")
     silver_path = spark.conf.get("spark.silver.output.path")
@@ -151,7 +164,6 @@ def main() -> None:
     valid_df, quarantine_df = validate_and_split(typed_df)
     write_quarantine(quarantine_path, quarantine_df)
     merge_to_silver(spark, silver_path, valid_df)
-    write_watermark(spark, watermark_path, JOB_NAME, current_version)
     print(f"[{JOB_NAME}] watermark updated to Bronze version {current_version}.")
 
 

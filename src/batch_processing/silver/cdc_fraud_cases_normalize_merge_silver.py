@@ -21,8 +21,10 @@ JOB_NAME = "silver-fraud-cases"
 
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName(f"{JOB_NAME}-batch").getOrCreate()
-
+    return SparkSession.builder \
+                .appName(f"{JOB_NAME}-batch") \
+                .enableHiveSupport() \
+                .getOrCreate()
 
 # ---------------------------------------------------------------------------
 # Transform
@@ -133,6 +135,7 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
             dedup_df.filter(F.col("_cdc_op") != "d")
             .withColumn("reported_date", F.to_date("reported_at"))
             .write.format("delta")
+            .mode("overwrite")
             .partitionBy("reported_date")
             .save(silver_path)
         )

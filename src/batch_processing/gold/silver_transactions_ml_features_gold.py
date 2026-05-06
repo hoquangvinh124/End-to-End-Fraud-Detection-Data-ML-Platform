@@ -37,6 +37,7 @@ All configuration is loaded from spark-defaults.conf (``spark.gold.*`` namespace
 from __future__ import annotations
 
 import datetime
+from textwrap import dedent
 
 from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
@@ -45,7 +46,42 @@ from pyspark.sql import types as T
 
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName("gold-ml-features").getOrCreate()
+    return (
+        SparkSession.builder.appName("gold-ml-features")
+        .enableHiveSupport()
+        .getOrCreate()
+    )
+
+
+GOLD_DATABASE = "banking"
+GOLD_ML_TABLE = "fraud_detection_ml_features"
+GOLD_ML_TABLE_FQN = f"{GOLD_DATABASE}.{GOLD_ML_TABLE}"
+
+
+def register_ml_features_gold_table(
+    spark: SparkSession, gold_path: str, db_location: str
+) -> None:
+    spark.sql(
+        f"CREATE DATABASE IF NOT EXISTS {GOLD_DATABASE} LOCATION '{db_location}'"
+    )
+    spark.sql(
+        dedent(
+            f"""
+            CREATE TABLE IF NOT EXISTS {GOLD_ML_TABLE_FQN}
+            USING DELTA
+            LOCATION '{gold_path}'
+            TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
+    spark.sql(
+        dedent(
+            f"""
+            ALTER TABLE {GOLD_ML_TABLE_FQN}
+            SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
 
 
 def resolve_feature_date(spark: SparkSession) -> datetime.date:
@@ -216,6 +252,9 @@ def main() -> None:
     terminal_path     = spark.conf.get("spark.gold.terminal.output.path")
     silver_fraud_path = spark.conf.get("spark.gold.silver.fraud.path")
     gold_path         = spark.conf.get("spark.gold.ml.output.path")
+    db_location       = spark.conf.get("spark.banking.database.location")
+
+    register_ml_features_gold_table(spark, gold_path, db_location)
 
     feature_date = resolve_feature_date(spark)
     print(f"[gold] ml_features: feature_date={feature_date}")

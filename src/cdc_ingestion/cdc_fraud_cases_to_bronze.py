@@ -26,14 +26,50 @@ $SPARK_HOME/conf/spark-defaults.conf). Job parameters live under the
 """
 from __future__ import annotations
 
+from textwrap import dedent
+
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
 from utils.schema_registry_helpers import fetch_avro_schema
 
+BRONZE_DATABASE = "banking"
+BRONZE_TABLE = "fraud_cases_bronze"
+BRONZE_TABLE_FQN = f"{BRONZE_DATABASE}.{BRONZE_TABLE}"
+
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName("cdc-fraud-cases-to-bronze").getOrCreate()
+    return (
+        SparkSession.builder.appName("cdc-fraud-cases-to-bronze")
+        .enableHiveSupport()
+        .getOrCreate()
+    )
+
+
+def register_fraud_cases_external_table(
+    spark: SparkSession, output_path: str, db_location: str
+) -> None:
+    spark.sql(
+        f"CREATE DATABASE IF NOT EXISTS {BRONZE_DATABASE} LOCATION '{db_location}'"
+    )
+    spark.sql(
+        dedent(
+            f"""
+            CREATE TABLE IF NOT EXISTS {BRONZE_TABLE_FQN}
+            USING DELTA
+            LOCATION '{output_path}'
+            TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
+    spark.sql(
+        dedent(
+            f"""
+            ALTER TABLE {BRONZE_TABLE_FQN}
+            SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +137,9 @@ def main() -> None:
     checkpoint_path = spark.conf.get("spark.bronze.fraud_cases.checkpoint.path")
     trigger_interval = spark.conf.get("spark.bronze.trigger.interval")
     sr_url = spark.conf.get("spark.bronze.schema.registry.url")
+    db_location = spark.conf.get("spark.banking.database.location")
+
+    register_fraud_cases_external_table(spark, output_path, db_location)
 
     avro_schema_str = fetch_avro_schema(sr_url, f"{topic}-value")
 

@@ -93,7 +93,6 @@ def cast_types(df: DataFrame) -> DataFrame:
             "_ingested_at",
             "_source_ts_ms",
             "_cdc_ts_ms",
-            "_deleted",
         )
     )
 

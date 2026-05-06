@@ -93,9 +93,9 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
     event_col = from_avro(avro_payload, avro_schema_str).alias("event")
     event_df = raw_df.select(event_col)
 
-    payload = F.when(
-        F.col("event.op") == F.lit("d"), F.col("event.before")
-    ).otherwise(F.col("event.after"))
+    # fraud_cases lifecycle is INSERT (reported) + UPDATE (resolved) only —
+    # rows are never deleted. event.after always carries the current row state.
+    payload = F.col("event.after")
 
     return event_df.select(
         payload.case_id.alias("case_id"),
@@ -118,7 +118,6 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
         F.col("event.ts_ms").alias("_cdc_ts_ms"),
         F.col("event.source.snapshot").alias("_snapshot"),
         F.col("event.source.lsn").alias("_lsn"),
-        (F.col("event.op") == F.lit("d")).alias("_deleted"),
         F.current_timestamp().alias("_ingested_at"),
     )
 

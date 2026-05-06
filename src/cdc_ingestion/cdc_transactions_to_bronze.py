@@ -78,10 +78,9 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
     event_col = from_avro(avro_payload, avro_schema_str).alias("event")
     event_df = raw_df.select(event_col)
 
-    # For deletes the relevant payload is ``before``; for all others use ``after``.
-    payload = F.when(
-        F.col("event.op") == F.lit("d"), F.col("event.before")
-    ).otherwise(F.col("event.after"))
+    # transactions lifecycle is INSERT + UPDATE only in this dataset;
+    # event.after always carries the current row state.
+    payload = F.col("event.after")
 
     return event_df.select(
         payload.transaction_id.alias("transaction_id"),
@@ -109,7 +108,6 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
         F.col("event.ts_ms").alias("_cdc_ts_ms"),
         F.col("event.source.snapshot").alias("_snapshot"),
         F.col("event.source.lsn").alias("_lsn"),
-        (F.col("event.op") == F.lit("d")).alias("_deleted"),
         F.current_timestamp().alias("_ingested_at"),
     )
 

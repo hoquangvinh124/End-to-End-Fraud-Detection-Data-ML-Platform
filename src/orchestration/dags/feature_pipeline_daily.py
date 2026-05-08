@@ -11,11 +11,9 @@ Dependency graph:
                                                                 ──► gold.aggregate_terminal_features ──► gold.assemble_ml_features ──► feast.materialize_online_features
   bronze.ingest_fraud_cases  ──► silver.normalize_fraud_cases  ──►/
 
-Each task runs a Docker container from the batch image (``SPARK_BATCH_IMAGE``
-Airflow Variable, default ``mlops-batch:latest``) on the shared infrastructure
-network (``DOCKER_NETWORK`` Airflow Variable, default ``mlops_default``).
+Each task runs a Docker container from the batch image on the shared infrastructure
+network. Configure via environment variables in docker-compose.airflow.yml:
 
-Airflow Variables (set in Admin → Variables or via CLI):
   SPARK_BATCH_IMAGE   Docker image built from src/batch_processing/Dockerfile
                       Default: mlops-batch:latest
   DOCKER_NETWORK      Docker network shared with Kafka + MinIO
@@ -25,23 +23,25 @@ Airflow Variables (set in Admin → Variables or via CLI):
 """
 from __future__ import annotations
 
+import os
 import pathlib
+from datetime import timedelta
 
 import pendulum
-from airflow import DAG
-from airflow.models import Variable
-from airflow.operators.bash import BashOperator
 from airflow.providers.docker.operators.docker import DockerOperator
-from airflow.utils.task_group import TaskGroup
+from airflow.providers.standard.operators.bash import BashOperator
+from airflow.sdk import DAG, TaskGroup
 
-# Absolute path to materialize script — resolved relative to this DAG file so it works
-# in any deployment (local, Docker Compose, GKE) as long as the repo layout is preserved.
-_MATERIALIZE_SCRIPT = pathlib.Path(__file__).resolve().parents[2] / "feature_store" / "materialize_to_redis.py"
+# Resolved at import time from environment — injected by docker-compose so the
+# scheduler never hits the DB during DAG parsing.
+_SPARK_IMAGE = os.environ.get("SPARK_BATCH_IMAGE", "mlops-batch:latest")
+_DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "mlops_default")
 
-
-
-SPARK_IMAGE = Variable.get("SPARK_BATCH_IMAGE", default_var="mlops-batch:latest")
-DOCKER_NETWORK = Variable.get("DOCKER_NETWORK", default_var="mlops_default")
+# Absolute path to the materialize script — works in any deployment as long as
+# the repo layout (src/orchestration/dags/ and src/feature_store/) is preserved.
+_MATERIALIZE_SCRIPT = (
+    pathlib.Path(__file__).resolve().parents[2] / "feature_store" / "materialize_to_redis.py"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -49,10 +49,9 @@ DOCKER_NETWORK = Variable.get("DOCKER_NETWORK", default_var="mlops_default")
 # ---------------------------------------------------------------------------
 
 
-def spark_task(
+def _spark_task(
     task_id: str,
     script: str,
-    dag: DAG,
     extra_conf: dict[str, str] | None = None,
 ) -> DockerOperator:
     """Return a DockerOperator that runs spark-submit inside the batch image.
@@ -61,22 +60,19 @@ def spark_task(
     Airflow can inject runtime values (e.g. feature_date) without rebuilding
     the image or editing spark-defaults.conf.
     """
-    conf_flags = " ".join(
-        f"--conf {k}={v}" for k, v in (extra_conf or {}).items()
-    )
+    conf_flags = " ".join(f"--conf {k}={v}" for k, v in (extra_conf or {}).items())
     cmd = f"spark-submit {conf_flags} {script}".strip()
 
     return DockerOperator(
         task_id=task_id,
-        dag=dag,
-        image=SPARK_IMAGE,
+        image=_SPARK_IMAGE,
         command=cmd,
-        network_mode=DOCKER_NETWORK,
-        auto_remove=True,
+        network_mode=_DOCKER_NETWORK,
+        auto_remove="success",
         mount_tmp_dir=False,
         retries=2,
-        retry_delay=pendulum.duration(minutes=5),
-        execution_timeout=pendulum.duration(hours=2),
+        retry_delay=timedelta(minutes=5),
+        execution_timeout=timedelta(hours=2),
     )
 
 
@@ -92,68 +88,59 @@ with DAG(
     catchup=False,
     tags=["batch", "features", "spark"],
     doc_md=__doc__,
-) as dag:
-
-    # ── CDC Ingestion ────────────────────────────────────────────────────────────
-    with TaskGroup("cdc_ingestion") as cdc_ingestion_group:
-        ingest_transactions = spark_task(
+):
+    # ── CDC Ingestion ─────────────────────────────────────────────────────
+    with TaskGroup("cdc_ingestion"):
+        ingest_transactions = _spark_task(
             task_id="ingest_transactions",
             script="/opt/cdc_ingestion/cdc_transactions_to_bronze.py",
-            dag=dag,
         )
 
-        ingest_fraud_cases = spark_task(
+        ingest_fraud_cases = _spark_task(
             task_id="ingest_fraud_cases",
             script="/opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py",
-            dag=dag,
         )
 
     # ── Silver ────────────────────────────────────────────────────────────
-    with TaskGroup("silver") as silver_group:
-        normalize_transactions = spark_task(
+    with TaskGroup("silver"):
+        normalize_transactions = _spark_task(
             task_id="normalize_transactions",
             script="/opt/silver/cdc_transactions_normalize_merge_silver.py",
-            dag=dag,
         )
 
-        normalize_fraud_cases = spark_task(
+        normalize_fraud_cases = _spark_task(
             task_id="normalize_fraud_cases",
             script="/opt/silver/cdc_fraud_cases_normalize_merge_silver.py",
-            dag=dag,
         )
 
     # ── Gold ──────────────────────────────────────────────────────────────
-    with TaskGroup("gold") as gold_group:
+    with TaskGroup("gold"):
         # feature_date = Airflow logical date (yesterday's data)
-        aggregate_customer_features = spark_task(
+        aggregate_customer_features = _spark_task(
             task_id="aggregate_customer_features",
             script="/opt/gold/silver_transactions_window_aggregate_customer_gold.py",
-            dag=dag,
             extra_conf={"spark.gold.feature.date": "{{ ds }}"},
         )
 
-        aggregate_terminal_features = spark_task(
+        aggregate_terminal_features = _spark_task(
             task_id="aggregate_terminal_features",
             script="/opt/gold/silver_transactions_window_aggregate_terminal_gold.py",
-            dag=dag,
             extra_conf={"spark.gold.feature.date": "{{ ds }}"},
         )
 
-        assemble_ml_features = spark_task(
+        assemble_ml_features = _spark_task(
             task_id="assemble_ml_features",
             script="/opt/gold/silver_transactions_ml_features_gold.py",
-            dag=dag,
             extra_conf={"spark.gold.feature.date": "{{ ds }}"},
         )
 
-    # ── Feast ──────────────────────────────────────────────────────────────
+    # ── Feast ─────────────────────────────────────────────────────────────
     materialize_online_features = BashOperator(
         task_id="materialize_online_features",
-        bash_command=f"uv run python {_MATERIALIZE_SCRIPT}",
-        dag=dag,
+        bash_command=f"uv run python {_MATERIALIZE_SCRIPT} ",
         retries=2,
-        retry_delay=pendulum.duration(minutes=5),
-        execution_timeout=pendulum.duration(minutes=30),
+        retry_delay=timedelta(minutes=5),
+        execution_timeout=timedelta(minutes=30),
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────
@@ -163,7 +150,7 @@ with DAG(
     # Customer features only need transaction Silver
     normalize_transactions >> aggregate_customer_features
 
-    # Terminal features need BOTH Silver tables (transactions + fraud labels)
+    # Terminal features needs BOTH Silver tables (transactions + fraud labels)
     [normalize_transactions, normalize_fraud_cases] >> aggregate_terminal_features
 
     # ML features table needs both Gold partitions to be ready

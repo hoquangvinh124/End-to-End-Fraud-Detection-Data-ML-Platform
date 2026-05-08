@@ -1,34 +1,45 @@
-# Airflow stack for the fraud detection batch pipeline.
+# Airflow 3 stack for the fraud detection batch pipeline.
 #
 # Usage:
 #   docker compose -f docker-compose.airflow.yml up -d
 #   open http://localhost:8090  (admin / admin)
 #
-# First-time setup (run once after 'airflow-init' completes):
-#   Set Airflow Variables in the UI (Admin → Variables):
-#     SPARK_BATCH_IMAGE  — Docker image built from src/batch_processing/Dockerfile
-#                          e.g. mlops-batch:latest
-#     DOCKER_NETWORK     — network shared with Kafka and MinIO
-#                          run: docker network ls --filter name=default
-#                          e.g. cdc_default or mlops_default
+# Airflow 3 service architecture:
+#   api-server     — REST API + web UI  (replaces 2.x webserver, port 8090)
+#   dag-processor  — parses DAG files   (NEW required service in Airflow 3)
+#   scheduler      — monitors tasks and triggers runs
+#   triggerer      — handles deferrable tasks
+#
+# Infrastructure config for DAGs is passed as environment variables to avoid
+# parse-time Variable.get() calls (Airflow 3 best practice):
+#   SPARK_BATCH_IMAGE  — Docker image built from src/batch_processing/Dockerfile
+#                        e.g. mlops-batch:latest
+#   DOCKER_NETWORK     — network shared with Kafka and MinIO
+#                        run: docker network ls --filter name=default
+#                        e.g. cdc_default or mlops_default
 #
 # CDC ingestion (continuous Structured Streaming) runs separately:
 #   docker compose -f src/cdc_ingestion/docker-compose.cdc_ingestion.yml up -d
-#   This requires a CDC_INGESTION_IMAGE built from src/cdc_ingestion/Dockerfile
 #
 # The DockerOperator mounts /var/run/docker.sock so tasks launch containers
 # directly on the host Docker daemon (same daemon as Kafka/MinIO).
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:2.9.0
+  image: apache/airflow:3.0.2
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: "true"
-    # Install Docker provider at startup (avoids custom image build)
-    _PIP_ADDITIONAL_REQUIREMENTS: "apache-airflow-providers-docker>=3.9.0"
+    AIRFLOW__API_SERVER__EXPOSE_CONFIG: "true"
+    # DAG infrastructure config — read by feature_pipeline_daily.py via os.environ
+    SPARK_BATCH_IMAGE: "mlops-batch:latest"
+    DOCKER_NETWORK: "mlops_default"
+    # Install providers at startup (avoids custom image build)
+    # standard provider: BashOperator and other core operators moved here in Airflow 3
+    _PIP_ADDITIONAL_REQUIREMENTS: >-
+      apache-airflow-providers-docker>=3.9.0
+      apache-airflow-providers-standard>=1.0.0
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - airflow_logs:/opt/airflow/logs
@@ -61,7 +72,10 @@ services:
     entrypoint: /bin/bash
     command: >
       -c "
-        pip install apache-airflow-providers-docker>=3.9.0 --quiet &&
+        pip install
+          'apache-airflow-providers-docker>=3.9.0'
+          'apache-airflow-providers-standard>=1.0.0'
+          --quiet &&
         airflow db migrate &&
         airflow users create
           --username admin --password admin
@@ -70,10 +84,11 @@ services:
       "
     restart: "no"
 
-  airflow-webserver:
+  # Replaces airflow-webserver from Airflow 2.x
+  airflow-api-server:
     <<: *airflow-common
-    container_name: airflow-webserver
-    command: webserver
+    container_name: airflow-api-server
+    command: api-server
     ports:
       - "8090:8080"
     healthcheck:
@@ -88,13 +103,33 @@ services:
       airflow-postgres:
         condition: service_healthy
 
+  # Required in Airflow 3: parses DAG files independently from the scheduler
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: airflow-dag-processor
+    command: dag-processor
+    restart: unless-stopped
+    depends_on:
+      airflow-api-server:
+        condition: service_healthy
+
   airflow-scheduler:
     <<: *airflow-common
     container_name: airflow-scheduler
     command: scheduler
     restart: unless-stopped
     depends_on:
-      airflow-webserver:
+      airflow-api-server:
+        condition: service_healthy
+
+  # Handles deferrable tasks (recommended in Airflow 3)
+  airflow-triggerer:
+    <<: *airflow-common
+    container_name: airflow-triggerer
+    command: triggerer
+    restart: unless-stopped
+    depends_on:
+      airflow-api-server:
         condition: service_healthy
 
 volumes:

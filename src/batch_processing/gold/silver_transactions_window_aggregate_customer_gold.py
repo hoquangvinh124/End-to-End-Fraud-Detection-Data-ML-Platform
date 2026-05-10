@@ -34,6 +34,7 @@ All configuration is loaded from spark-defaults.conf (``spark.gold.*`` namespace
 from __future__ import annotations
 
 import datetime
+from textwrap import dedent
 
 from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
@@ -41,7 +42,42 @@ from pyspark.sql import functions as F
 
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName("gold-customer-window-features").getOrCreate()
+    return (
+        SparkSession.builder.appName("gold-customer-window-features")
+        .enableHiveSupport()
+        .getOrCreate()
+    )
+
+
+GOLD_DATABASE = "banking"
+GOLD_CUSTOMER_TABLE = "customer_features"
+GOLD_CUSTOMER_TABLE_FQN = f"{GOLD_DATABASE}.{GOLD_CUSTOMER_TABLE}"
+
+
+def register_customer_gold_table(
+    spark: SparkSession, gold_path: str, db_location: str
+) -> None:
+    spark.sql(
+        f"CREATE DATABASE IF NOT EXISTS {GOLD_DATABASE} LOCATION '{db_location}'"
+    )
+    spark.sql(
+        dedent(
+            f"""
+            CREATE TABLE IF NOT EXISTS {GOLD_CUSTOMER_TABLE_FQN}
+            USING DELTA
+            LOCATION '{gold_path}'
+            TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
+    spark.sql(
+        dedent(
+            f"""
+            ALTER TABLE {GOLD_CUSTOMER_TABLE_FQN}
+            SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
 
 
 def resolve_feature_date(spark: SparkSession) -> datetime.date:
@@ -150,6 +186,9 @@ def main() -> None:
 
     silver_path = spark.conf.get("spark.gold.silver.input.path")
     gold_path = spark.conf.get("spark.gold.customer.output.path")
+    db_location = spark.conf.get("spark.banking.database.location")
+
+    register_customer_gold_table(spark, gold_path, db_location)
 
     feature_date = resolve_feature_date(spark)
     # 30-day window needs fd-29 inclusive → scan from fd-29

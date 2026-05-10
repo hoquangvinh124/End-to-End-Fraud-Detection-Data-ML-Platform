@@ -1,6 +1,7 @@
 """Silver fraud_cases batch job: Bronze Delta (CDF) → Silver Delta.
 
-Reads new CDC rows incrementally via Delta Change Data Feed, normalises them,
+Reads new CDC rows incrementally via Delta Change Data Feed using Spark
+Structured Streaming with trigger(availableNow=True), normalises them,
 and MERGEs the result into a Silver Delta table.
 
 ``is_fraud`` is derived in Silver: case_status='confirmed' AND resolved_at IS NOT NULL.
@@ -8,12 +9,14 @@ All configuration from spark-defaults.conf (``spark.silver.fraud_cases.*``).
 """
 from __future__ import annotations
 
+from functools import partial
+from textwrap import dedent
+
 from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql import window as W
-from utils.watermark import read_watermark, write_watermark
 
 _CDF_META_COLS = ("_change_type", "_commit_version", "_commit_timestamp")
 
@@ -21,8 +24,41 @@ JOB_NAME = "silver-fraud-cases"
 
 
 def build_spark_session() -> SparkSession:
-    return SparkSession.builder.appName(f"{JOB_NAME}-batch").getOrCreate()
+    return SparkSession.builder \
+                .appName(f"{JOB_NAME}-batch") \
+                .enableHiveSupport() \
+                .getOrCreate()
 
+
+SILVER_DATABASE = "banking"
+SILVER_TABLE = "fraud_cases"
+SILVER_TABLE_FQN = f"{SILVER_DATABASE}.{SILVER_TABLE}"
+
+
+def register_fraud_cases_silver_table(
+    spark: SparkSession, silver_path: str, db_location: str
+) -> None:
+    spark.sql(
+        f"CREATE DATABASE IF NOT EXISTS {SILVER_DATABASE} LOCATION '{db_location}'"
+    )
+    spark.sql(
+        dedent(
+            f"""
+            CREATE TABLE IF NOT EXISTS {SILVER_TABLE_FQN}
+            USING DELTA
+            LOCATION '{silver_path}'
+            TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
+    spark.sql(
+        dedent(
+            f"""
+            ALTER TABLE {SILVER_TABLE_FQN}
+            SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+            """
+        ).strip()
+    )
 
 # ---------------------------------------------------------------------------
 # Transform
@@ -58,7 +94,6 @@ def cast_types(df: DataFrame) -> DataFrame:
             "_ingested_at",
             "_source_ts_ms",
             "_cdc_ts_ms",
-            "_deleted",
         )
     )
 
@@ -133,6 +168,7 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
             dedup_df.filter(F.col("_cdc_op") != "d")
             .withColumn("reported_date", F.to_date("reported_at"))
             .write.format("delta")
+            .mode("overwrite")
             .partitionBy("reported_date")
             .save(silver_path)
         )
@@ -145,46 +181,51 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
 # ---------------------------------------------------------------------------
 
 
+def process_batch(
+    batch_df: DataFrame,
+    batch_id: int,  # noqa: ARG001
+    *,
+    spark: SparkSession,
+    silver_path: str,
+    quarantine_path: str,
+) -> None:
+    """foreachBatch handler for the Silver fraud_cases stream."""
+    clean_df = (
+        batch_df
+        .filter(F.col("_change_type") == "insert")
+        .drop(*_CDF_META_COLS)
+    )
+    if clean_df.isEmpty():
+        return
+    typed_df = cast_types(clean_df)
+    valid_df, quarantine_df = validate_and_split(typed_df)
+    write_quarantine(quarantine_path, quarantine_df)
+    merge_to_silver(spark, silver_path, valid_df)
+    print(f"[{JOB_NAME}] batch {batch_id} processed.")
+
+
 def main() -> None:
     spark = build_spark_session()
 
     bronze_path = spark.conf.get("spark.silver.fraud_cases.bronze.input.path")
     silver_path = spark.conf.get("spark.silver.fraud_cases.output.path")
     quarantine_path = spark.conf.get("spark.silver.fraud_cases.quarantine.path")
-    watermark_path = spark.conf.get("spark.silver.fraud_cases.watermark.path")
+    checkpoint_path = spark.conf.get("spark.silver.fraud_cases.checkpoint.path")
+    db_location = spark.conf.get("spark.banking.database.location")
 
-    last_version: int | None = read_watermark(spark, watermark_path, JOB_NAME)
-    current_version = int(
-        DeltaTable.forPath(spark, bronze_path).history(1).first()["version"]
-    )
+    register_fraud_cases_silver_table(spark, silver_path, db_location)
 
-    if last_version is not None and last_version >= current_version:
-        print(
-            f"[{JOB_NAME}] no new data "
-            f"(last_processed={last_version}, "
-            f"bronze_current={current_version}), exiting."
-        )
-        return
-
-    start_version = 0 if last_version is None else last_version + 1
-    print(f"[{JOB_NAME}] reading Bronze CDF versions {start_version}–{current_version}")
-
-    bronze_df = (
-        spark.read.format("delta")
+    (
+        spark.readStream.format("delta")
         .option("readChangeFeed", "true")
-        .option("startingVersion", start_version)
-        .option("endingVersion", current_version)
         .load(bronze_path)
-        .filter(F.col("_change_type") == "insert")
-        .drop(*_CDF_META_COLS)
+        .writeStream
+        .trigger(availableNow=True)
+        .foreachBatch(partial(process_batch, spark=spark, silver_path=silver_path, quarantine_path=quarantine_path))
+        .option("checkpointLocation", checkpoint_path)
+        .start()
+        .awaitTermination()
     )
-
-    typed_df = cast_types(bronze_df)
-    valid_df, quarantine_df = validate_and_split(typed_df)
-    write_quarantine(quarantine_path, quarantine_df)
-    merge_to_silver(spark, silver_path, valid_df)
-    write_watermark(spark, watermark_path, JOB_NAME, current_version)
-    print(f"[{JOB_NAME}] watermark updated to Bronze version {current_version}.")
 
 
 if __name__ == "__main__":

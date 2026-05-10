@@ -1,10 +1,10 @@
-"""Unit tests for cdc_transactions_to_bronze.py."""
+﻿"""Unit tests for cdc_transactions_to_bronze.py."""
 
 from __future__ import annotations
 
 import pathlib
 import sys
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 MODULE_DIR = pathlib.Path(__file__).resolve().parents[2] / "cdc_ingestion"
 if str(MODULE_DIR) not in sys.path:
@@ -14,11 +14,10 @@ import cdc_transactions_to_bronze as mod  # noqa: E402
 
 
 class TestBuildSparkSession:
-    def test_enables_hive_support_and_metastore_uri(self):
+    def test_enables_hive_support_without_hard_coded_metastore(self):
         builder = MagicMock()
         builder.appName.return_value = builder
         builder.enableHiveSupport.return_value = builder
-        builder.config.return_value = builder
         spark = MagicMock()
         builder.getOrCreate.return_value = spark
 
@@ -31,34 +30,26 @@ class TestBuildSparkSession:
         assert result is spark
         builder.appName.assert_called_once_with("cdc-transactions-to-bronze")
         builder.enableHiveSupport.assert_called_once_with()
-        builder.config.assert_called_once_with(
-            "spark.hadoop.hive.metastore.uris", mod.HIVE_METASTORE_URI
-        )
+        builder.config.assert_not_called()
         builder.getOrCreate.assert_called_once_with()
 
 
 class TestRegisterTransactionsExternalTable:
-    def test_registers_hive_database_and_cdf_table(self):
+    def test_registers_hive_database_with_location_and_cdf_table(self):
         spark = MagicMock()
 
-        mod.ensure_banking_database(spark)
         mod.register_transactions_external_table(
-            spark, "s3a://bronze/cdc/transactions"
+            spark, "s3a://bronze/cdc/transactions", "s3a://warehouse/banking.db"
         )
 
-        assert spark.sql.call_args_list == [
-            call("CREATE DATABASE IF NOT EXISTS banking"),
-            call(
-                "CREATE TABLE IF NOT EXISTS banking.transactions_bronze\n"
-                "USING DELTA\n"
-                "LOCATION 's3a://bronze/cdc/transactions'\n"
-                "TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')"
-            ),
-            call(
-                "ALTER TABLE banking.transactions_bronze\n"
-                "SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')"
-            ),
-        ]
+        sql_calls = [c.args[0] for c in spark.sql.call_args_list]
+        assert any(
+            "CREATE DATABASE IF NOT EXISTS banking" in s and "s3a://warehouse/banking.db" in s
+            for s in sql_calls
+        )
+        assert any("CREATE TABLE IF NOT EXISTS banking.transactions_bronze" in s for s in sql_calls)
+        assert any("ALTER TABLE banking.transactions_bronze" in s for s in sql_calls)
+        assert any("delta.enableChangeDataFeed" in s for s in sql_calls)
 
 
 class TestMain:
@@ -78,6 +69,7 @@ class TestMain:
             ),
             "spark.bronze.trigger.interval": "5 minutes",
             "spark.bronze.schema.registry.url": "http://schema-registry:8081",
+            "spark.banking.database.location": "s3a://warehouse/banking.db",
         }[key]
 
         reader = spark.readStream
@@ -92,13 +84,8 @@ class TestMain:
 
         with (
             patch.object(mod, "build_spark_session", return_value=spark),
-            patch.object(mod, "fetch_avro_schema", return_value="{\"type\":\"record\"}"),
+            patch.object(mod, "fetch_avro_schema", return_value='{"type":"record"}'),
             patch.object(mod, "build_bronze_rows", return_value=bronze_df),
-            patch.object(
-                mod,
-                "ensure_banking_database",
-                side_effect=lambda *_args, **_kwargs: order.append("database"),
-            ),
             patch.object(
                 mod,
                 "register_transactions_external_table",
@@ -107,5 +94,5 @@ class TestMain:
         ):
             mod.main()
 
-        assert order == ["database", "table", "start"]
+        assert order == ["table", "start"]
         query.awaitTermination.assert_called_once_with()

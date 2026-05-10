@@ -1,4 +1,4 @@
-"""Spark Structured Streaming job: Kafka CDC -> Parquet Bronze (MinIO).
+﻿"""Spark Structured Streaming job: Kafka CDC -> Parquet Bronze (MinIO).
 
 Reads Debezium Avro-encoded messages from the ``cdc.transactions`` Kafka topic,
 lightly unwraps the payload, adds CDC metadata columns, and writes plain
@@ -20,7 +20,6 @@ from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
 from utils.schema_registry_helpers import fetch_avro_schema
 
-HIVE_METASTORE_URI = "thrift://hive-metastore:9083"
 BRONZE_DATABASE = "banking"
 BRONZE_TABLE = "transactions_bronze"
 BRONZE_TABLE_FQN = f"{BRONZE_DATABASE}.{BRONZE_TABLE}"
@@ -30,18 +29,16 @@ def build_spark_session() -> SparkSession:
     return (
         SparkSession.builder.appName("cdc-transactions-to-bronze")
         .enableHiveSupport()
-        .config("spark.hadoop.hive.metastore.uris", HIVE_METASTORE_URI)
         .getOrCreate()
     )
 
 
-def ensure_banking_database(spark: SparkSession) -> None:
-    spark.sql(f"CREATE DATABASE IF NOT EXISTS {BRONZE_DATABASE}")
-
-
 def register_transactions_external_table(
-    spark: SparkSession, output_path: str
+    spark: SparkSession, output_path: str, db_location: str
 ) -> None:
+    spark.sql(
+        f"CREATE DATABASE IF NOT EXISTS {BRONZE_DATABASE} LOCATION '{db_location}'"
+    )
     spark.sql(
         dedent(
             f"""
@@ -81,10 +78,9 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
     event_col = from_avro(avro_payload, avro_schema_str).alias("event")
     event_df = raw_df.select(event_col)
 
-    # For deletes the relevant payload is ``before``; for all others use ``after``.
-    payload = F.when(
-        F.col("event.op") == F.lit("d"), F.col("event.before")
-    ).otherwise(F.col("event.after"))
+    # transactions lifecycle is INSERT + UPDATE only in this dataset;
+    # event.after always carries the current row state.
+    payload = F.col("event.after")
 
     return event_df.select(
         payload.transaction_id.alias("transaction_id"),
@@ -112,7 +108,6 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
         F.col("event.ts_ms").alias("_cdc_ts_ms"),
         F.col("event.source.snapshot").alias("_snapshot"),
         F.col("event.source.lsn").alias("_lsn"),
-        (F.col("event.op") == F.lit("d")).alias("_deleted"),
         F.current_timestamp().alias("_ingested_at"),
     )
 
@@ -132,8 +127,8 @@ def main() -> None:
     trigger_interval = spark.conf.get("spark.bronze.trigger.interval")
     sr_url = spark.conf.get("spark.bronze.schema.registry.url")
 
-    ensure_banking_database(spark)
-    register_transactions_external_table(spark, output_path)
+    db_location = spark.conf.get("spark.banking.database.location")
+    register_transactions_external_table(spark, output_path, db_location)
 
     avro_schema_str = fetch_avro_schema(sr_url, f"{topic}-value")
 

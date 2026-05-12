@@ -40,6 +40,8 @@ x-airflow-common: &airflow-common
     MATERIALIZE_SCRIPT_PATH: "/opt/airflow/feature_store/materialize_to_redis.py"
     TRINO_HOST: "trino"
     TRINO_PORT: "8080"
+    CLICKHOUSE_HOST: "clickhouse"
+    CLICKHOUSE_PORT: "8123"
     # Install providers at startup (avoids custom image build)
     # standard provider: BashOperator and other core operators moved here in Airflow 3
     _PIP_ADDITIONAL_REQUIREMENTS: >-

@@ -73,7 +73,7 @@ services:
         condition: service_completed_successfully
 
   trino:
-    image: trinodb/trino:480
+    image: trinodb/trino:481
     container_name: trino
     hostname: trino
     ports:
@@ -85,6 +85,22 @@ services:
       hive-metastore:
         condition: service_started
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:head-distroless
+    container_name: clickhouse
+    hostname: clickhouse
+    ports:
+      - "8123:8123"
+      - "19000:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   minio_data:
   metastore_db_data:
+  clickhouse_data:

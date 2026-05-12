@@ -1,29 +1,84 @@
 """Unit tests for feature_store.materialize_to_redis."""
-from datetime import datetime, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
-from feature_store.materialize_to_redis import materialize
+import pandas as pd
+
+from feature_store.materialize_to_redis import _resolve_feature_date, materialize
 
 
-def test_materialize_incremental_called_when_no_start_date() -> None:
+def _make_client(customer_rows: int = 2, terminal_rows: int = 3) -> MagicMock:
+    """Return a mock clickhouse-connect client with non-empty DataFrames."""
+    client = MagicMock()
+    client.query_df.side_effect = [
+        pd.DataFrame(
+            {
+                "customer_id": range(customer_rows),
+                "event_timestamp": ["2026-05-11"] * customer_rows,
+                "CUSTOMER_AVG_AMOUNT_WINDOW_1D": [1.0] * customer_rows,
+                "CUSTOMER_AVG_AMOUNT_WINDOW_7D": [1.0] * customer_rows,
+                "CUSTOMER_AVG_AMOUNT_WINDOW_30D": [1.0] * customer_rows,
+                "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D": [1.0] * customer_rows,
+                "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D": [1.0] * customer_rows,
+                "CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D": [1.0] * customer_rows,
+            }
+        ),
+        pd.DataFrame(
+            {
+                "terminal_id": range(terminal_rows),
+                "event_timestamp": ["2026-05-11"] * terminal_rows,
+                "TERMINAL_RISK_1DAY_WINDOW": [0.1] * terminal_rows,
+                "TERMINAL_RISK_7DAY_WINDOW": [0.1] * terminal_rows,
+                "TERMINAL_RISK_30DAY_WINDOW": [0.1] * terminal_rows,
+                "TERMINAL_NB_TX_1DAY_WINDOW": [1.0] * terminal_rows,
+                "TERMINAL_NB_TX_7DAY_WINDOW": [1.0] * terminal_rows,
+                "TERMINAL_NB_TX_30DAY_WINDOW": [1.0] * terminal_rows,
+            }
+        ),
+    ]
+    return client
+
+
+def test_write_to_online_store_called_for_both_views() -> None:
     store = MagicMock()
-    materialize(store, start_date=None)
-    store.materialize_incremental.assert_called_once()
-    _, kwargs = store.materialize_incremental.call_args
-    end_date = kwargs["end_date"]
-    assert isinstance(end_date, datetime)
-    assert end_date.tzinfo is not None
-    store.materialize.assert_not_called()
+    client = _make_client()
+    with patch("feature_store.materialize_to_redis._get_client", return_value=client):
+        materialize(store, "2026-05-11")
+    assert store.write_to_online_store.call_count == 2
+    calls = {c.kwargs["feature_view_name"] for c in store.write_to_online_store.call_args_list}
+    assert calls == {"customer_features_view", "terminal_features_view"}
+    client.close.assert_called_once()
 
 
-def test_materialize_range_called_when_start_date_given() -> None:
+def test_empty_customer_df_skips_write(capsys) -> None:
     store = MagicMock()
-    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    materialize(store, start_date=start)
-    store.materialize.assert_called_once()
-    _, kwargs = store.materialize.call_args
-    assert kwargs["start_date"] == start
-    end_date = kwargs["end_date"]
-    assert isinstance(end_date, datetime)
-    assert end_date.tzinfo is not None
-    store.materialize_incremental.assert_not_called()
+    client = MagicMock()
+    client.query_df.side_effect = [
+        pd.DataFrame(),  # empty customer
+        pd.DataFrame({"terminal_id": [1], "event_timestamp": ["2026-05-11"],
+                       "TERMINAL_RISK_1DAY_WINDOW": [0.1], "TERMINAL_RISK_7DAY_WINDOW": [0.1],
+                       "TERMINAL_RISK_30DAY_WINDOW": [0.1], "TERMINAL_NB_TX_1DAY_WINDOW": [1.0],
+                       "TERMINAL_NB_TX_7DAY_WINDOW": [1.0], "TERMINAL_NB_TX_30DAY_WINDOW": [1.0]}),
+    ]
+    with patch("feature_store.materialize_to_redis._get_client", return_value=client):
+        materialize(store, "2026-05-11")
+    out = capsys.readouterr().out
+    assert "WARNING" in out and "customer" in out
+    # only terminal write happened
+    assert store.write_to_online_store.call_count == 1
+    assert store.write_to_online_store.call_args.kwargs["feature_view_name"] == "terminal_features_view"
+
+
+def test_resolve_feature_date_defaults_to_yesterday() -> None:
+    result = _resolve_feature_date(None)
+    from datetime import date, timedelta
+    assert result == (date.today() - timedelta(days=1)).isoformat()
+
+
+def test_resolve_feature_date_returns_provided_date() -> None:
+    assert _resolve_feature_date("2026-05-11") == "2026-05-11"
+
+
+def test_resolve_feature_date_rejects_bad_format() -> None:
+    import pytest
+    with pytest.raises(ValueError, match="YYYY-MM-DD"):
+        _resolve_feature_date("not-a-date")

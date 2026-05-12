@@ -1,15 +1,9 @@
--- Run once after Spark Bronze ingestion has written at least one batch.
--- Registers the existing Bronze Delta tables into the Hive Metastore so
--- Trino's lakehouse catalog can query them as dbt sources.
---
--- Safe to re-run: existing registrations are removed first.
+-- Registers Bronze Delta tables into the Hive Metastore.
+-- Run via register_bronze_tables.sh (which handles idempotency).
+-- Requires: Bronze Delta tables already written by Spark (at least one batch).
 
 CREATE SCHEMA IF NOT EXISTS lakehouse.bronze;
 CREATE SCHEMA IF NOT EXISTS lakehouse.staging;
-
--- Unregister first so this script is idempotent (no-ops if table not registered)
-CALL lakehouse.system.unregister_table(schema_name => 'bronze', table_name => 'transactions');
-CALL lakehouse.system.unregister_table(schema_name => 'bronze', table_name => 'fraud_cases');
 
 -- Register Bronze transactions Delta table (auto-infers schema from Delta log)
 CALL lakehouse.system.register_table(

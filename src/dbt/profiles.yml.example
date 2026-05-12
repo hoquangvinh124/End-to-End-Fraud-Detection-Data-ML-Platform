@@ -1,3 +1,5 @@
+# Copy to profiles.yml and fill in any environment-specific values.
+# profiles.yml is gitignored — only this example file is committed.
 fraud_detection:
   target: dev
   outputs:
@@ -9,7 +11,7 @@ fraud_detection:
       user: "{{ env_var('TRINO_USER', 'dbt') }}"
       database: lakehouse
       schema: staging
-      http_scheme: http
+      http_scheme: http  # Override to https when Trino is TLS-terminated in production
       threads: 4
       session_properties:
         query_max_execution_time: 30m

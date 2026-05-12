@@ -33,10 +33,13 @@ models:
   - name: stg_fraud_cases
     description: "Normalized fraud cases: Bronze CDC → staging with is_fraud derived"
     columns:
-      - name: transaction_id
+      - name: case_id
         tests:
           - not_null
           - unique
+      - name: transaction_id
+        tests:
+          - not_null
       - name: is_fraud
         tests:
           - not_null

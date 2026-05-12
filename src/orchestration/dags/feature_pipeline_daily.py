@@ -1,69 +1,99 @@
-"""feature_pipeline_daily — daily Spark batch pipeline to build ML features.
-
-Runs every day at 02:00 UTC and processes CDC data for the previous calendar day
-(Airflow's ``{{ ds }}``) through three medallion layers:
-
-  Bronze   → Silver   → Gold
+"""feature_pipeline_daily — daily batch pipeline: Bronze → dbt (staging/intermediate/marts) → Redis.
 
 Dependency graph:
 
-  bronze.ingest_transactions ──► silver.normalize_transactions ──► gold.aggregate_customer_features ──┐
-                                                                ──► gold.aggregate_terminal_features ──► gold.assemble_ml_features ──► feast.materialize_online_features
-  bronze.ingest_fraud_cases  ──► silver.normalize_fraud_cases  ──►/
+  bronze.ingest_transactions ──┐
+                                ├──► dbt_staging ──► dbt_intermediate ──► dbt_marts ──► materialize_online_features
+  bronze.ingest_fraud_cases  ──┘
 
-Each task runs a Docker container from the batch image on the shared infrastructure
-network. Configure via environment variables in docker-compose.airflow.yml:
+dbt_staging writes normalized Silver-equivalent tables to MinIO/Delta via Trino.
+dbt_intermediate writes customer + terminal window features to ClickHouse.
+dbt_marts writes the flat ML feature table to ClickHouse.
+materialize_online_features reads ClickHouse intermediate tables → pushes to Redis.
 
-  SPARK_BATCH_IMAGE   Docker image built from src/batch_processing/Dockerfile
-                      Default: mlops-batch:latest
-  DOCKER_NETWORK      Docker network shared with Kafka + MinIO
-                      Default: mlops_default
-                      Set to the output of:
-                        docker network ls --filter name=default --format '{{.Name}}'
+On any task failure a Discord alert is sent to the team webhook.
 """
 from __future__ import annotations
 
+import json
 import os
 import pathlib
+import urllib.request
 from datetime import timedelta
+from pathlib import Path
+from typing import Any
 
 import pendulum
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, TaskGroup
+from cosmos import (
+    DbtTaskGroup,
+    ExecutionConfig,
+    ExecutionMode,
+    ProfileConfig,
+    ProjectConfig,
+)
+from cosmos.profiles import TrinoProfileMapping
 
-# Resolved at import time from environment — injected by docker-compose so the
-# scheduler never hits the DB during DAG parsing.
 _SPARK_IMAGE = os.environ.get("SPARK_BATCH_IMAGE", "mlops-batch:latest")
 _DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "mlops_default")
-
-# Absolute path to the materialize script — works in any deployment as long as
-# the repo layout (src/orchestration/dags/ and src/feature_store/) is preserved.
-_MATERIALIZE_SCRIPT = (
-    pathlib.Path(__file__).resolve().parents[2] / "feature_store" / "materialize_to_redis.py"
+_DISCORD_WEBHOOK = os.environ.get(
+    "DISCORD_WEBHOOK_URL",
+    "https://discord.com/api/webhooks/1497906449865773117/8IsOYy6ySXOmI5RDvwyPdbES00hhYZ1VssX4jZnxNgTYzDg2u9_ihaI5qRD-QbO1crKL",
 )
+_MATERIALIZE_SCRIPT = os.environ.get(
+    "MATERIALIZE_SCRIPT_PATH",
+    str(pathlib.Path(__file__).resolve().parents[2] / "feature_store" / "materialize_to_redis.py"),
+)
+_DBT_PROJECT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
 
 
 # ---------------------------------------------------------------------------
-# Helper
+# Failure callback
+# ---------------------------------------------------------------------------
+
+
+def _notify_discord_failure(context: dict[str, Any]) -> None:
+    """Post a concise failure alert to Discord when any task fails."""
+    ti = context["task_instance"]
+    msg = (
+        f"🔴 **Airflow task FAILED**\n"
+        f"DAG: `{ti.dag_id}`  Task: `{ti.task_id}`\n"
+        f"Run: `{ti.run_id}`\n"
+        f"Exception: `{context.get('exception', 'n/a')}`\n"
+        f"Logs: {ti.log_url}"
+    )
+    data = json.dumps({"content": msg[:1900]}).encode("utf-8")
+    req = urllib.request.Request(
+        _DISCORD_WEBHOOK,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Helpers
 # ---------------------------------------------------------------------------
 
 
 def _spark_task(
     task_id: str,
     script: str,
+    doc_md: str = "",
     extra_conf: dict[str, str] | None = None,
 ) -> DockerOperator:
-    """Return a DockerOperator that runs spark-submit inside the batch image.
-
-    ``extra_conf`` entries are appended as ``--conf key=value`` flags so
-    Airflow can inject runtime values (e.g. feature_date) without rebuilding
-    the image or editing spark-defaults.conf.
-    """
+    """Return a DockerOperator running spark-submit inside the batch image."""
     conf_flags = " ".join(f"--conf {k}={v}" for k, v in (extra_conf or {}).items())
     cmd = f"spark-submit {conf_flags} {script}".strip()
 
-    return DockerOperator(
+    op = DockerOperator(
         task_id=task_id,
         image=_SPARK_IMAGE,
         command=cmd,
@@ -72,7 +102,51 @@ def _spark_task(
         mount_tmp_dir=False,
         retries=2,
         retry_delay=timedelta(minutes=5),
+        retry_exponential_backoff=True,
         execution_timeout=timedelta(hours=2),
+        on_failure_callback=_notify_discord_failure,
+    )
+    if doc_md:
+        op.doc_md = doc_md
+    return op
+
+
+def _dbt_task_group(
+    group_id: str,
+    select: str,
+) -> DbtTaskGroup:
+    """Return a cosmos DbtTaskGroup running dbt models for the given selector.
+
+    feature_date is passed as a dbt var so models filter to the Airflow logical date.
+    Trino connection is read from TRINO_HOST/TRINO_PORT env vars (set in docker-compose).
+    """
+    return DbtTaskGroup(
+        group_id=group_id,
+        project_config=ProjectConfig(
+            dbt_project_path=_DBT_PROJECT_DIR,
+            project_name="fraud_detection",
+        ),
+        profile_config=ProfileConfig(
+            profile_name="fraud_detection",
+            target_name="dev",
+            profile_mapping=TrinoProfileMapping(
+                conn_id="trino_default",
+                profile_args={
+                    "database": "lakehouse",
+                    "schema": "staging",
+                    "http_scheme": "http",
+                    "threads": 4,
+                },
+            ),
+        ),
+        execution_config=ExecutionConfig(
+            execution_mode=ExecutionMode.LOCAL,
+        ),
+        operator_args={
+            "vars": {"feature_date": "{{ ds }}"},
+            "select": select,
+            "on_failure_callback": _notify_discord_failure,
+        },
     )
 
 
@@ -82,78 +156,60 @@ def _spark_task(
 
 with DAG(
     dag_id="feature_pipeline_daily",
-    description="Daily medallion batch pipeline: Bronze → Silver → Gold",
+    description="Daily batch pipeline: Bronze (Spark) → dbt staging/intermediate/marts → Redis",
     schedule="0 2 * * *",
     start_date=pendulum.datetime(2025, 1, 1, tz="UTC"),
     catchup=False,
-    tags=["batch", "features", "spark"],
+    tags=["batch", "features", "dbt", "clickhouse"],
     doc_md=__doc__,
 ):
-    # ── CDC Ingestion ─────────────────────────────────────────────────────
-    with TaskGroup("cdc_ingestion"):
+    # ── Bronze CDC ingestion (Spark) ──────────────────────────────────────
+    with TaskGroup("bronze"):
         ingest_transactions = _spark_task(
             task_id="ingest_transactions",
             script="/opt/cdc_ingestion/cdc_transactions_to_bronze.py",
+            doc_md="Reads CDC rows from `cdc.transactions` Kafka topic → appends to Bronze Delta `s3a://bronze/cdc/transactions`.",
         )
 
         ingest_fraud_cases = _spark_task(
             task_id="ingest_fraud_cases",
             script="/opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py",
+            doc_md="Reads CDC rows from `cdc.fraud_cases` Kafka topic → appends to `s3a://bronze/cdc/fraud_cases`.",
         )
 
-    # ── Silver ────────────────────────────────────────────────────────────
-    with TaskGroup("silver"):
-        normalize_transactions = _spark_task(
-            task_id="normalize_transactions",
-            script="/opt/silver/cdc_transactions_normalize_merge_silver.py",
-        )
+    # ── dbt transform layers ──────────────────────────────────────────────
+    dbt_staging = _dbt_task_group(
+        group_id="dbt_staging",
+        select="staging",
+    )
 
-        normalize_fraud_cases = _spark_task(
-            task_id="normalize_fraud_cases",
-            script="/opt/silver/cdc_fraud_cases_normalize_merge_silver.py",
-        )
+    dbt_intermediate = _dbt_task_group(
+        group_id="dbt_intermediate",
+        select="intermediate",
+    )
 
-    # ── Gold ──────────────────────────────────────────────────────────────
-    with TaskGroup("gold"):
-        # feature_date = Airflow logical date (yesterday's data)
-        aggregate_customer_features = _spark_task(
-            task_id="aggregate_customer_features",
-            script="/opt/gold/silver_transactions_window_aggregate_customer_gold.py",
-            extra_conf={"spark.gold.feature.date": "{{ ds }}"},
-        )
+    dbt_marts = _dbt_task_group(
+        group_id="dbt_marts",
+        select="marts",
+    )
 
-        aggregate_terminal_features = _spark_task(
-            task_id="aggregate_terminal_features",
-            script="/opt/gold/silver_transactions_window_aggregate_terminal_gold.py",
-            extra_conf={"spark.gold.feature.date": "{{ ds }}"},
-        )
-
-        assemble_ml_features = _spark_task(
-            task_id="assemble_ml_features",
-            script="/opt/gold/silver_transactions_ml_features_gold.py",
-            extra_conf={"spark.gold.feature.date": "{{ ds }}"},
-        )
-
-    # ── Feast ─────────────────────────────────────────────────────────────
+    # ── Feast → Redis materialization ─────────────────────────────────────
     materialize_online_features = BashOperator(
         task_id="materialize_online_features",
-        bash_command=f"uv run python {_MATERIALIZE_SCRIPT} ",
+        bash_command=f"uv run python {_MATERIALIZE_SCRIPT} --feature-date {{{{ ds }}}}",
         retries=2,
         retry_delay=timedelta(minutes=5),
+        retry_exponential_backoff=True,
         execution_timeout=timedelta(minutes=30),
+        on_failure_callback=_notify_discord_failure,
+        doc_md=(
+            "Reads customer + terminal features from ClickHouse intermediate tables "
+            "for `{{ ds }}` and pushes to Redis via `feast write_to_online_store`."
+        ),
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────
-    ingest_transactions >> normalize_transactions
-    ingest_fraud_cases >> normalize_fraud_cases
-
-    # Customer features only need transaction Silver
-    normalize_transactions >> aggregate_customer_features
-
-    # Terminal features needs BOTH Silver tables (transactions + fraud labels)
-    [normalize_transactions, normalize_fraud_cases] >> aggregate_terminal_features
-
-    # ML features table needs both Gold partitions to be ready
-    [aggregate_customer_features, aggregate_terminal_features] >> assemble_ml_features
-
-    assemble_ml_features >> materialize_online_features
+    [ingest_transactions, ingest_fraud_cases] >> dbt_staging
+    dbt_staging >> dbt_intermediate
+    dbt_intermediate >> dbt_marts
+    dbt_marts >> materialize_online_features

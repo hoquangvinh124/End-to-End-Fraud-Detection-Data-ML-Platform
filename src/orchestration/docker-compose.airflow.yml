@@ -35,13 +35,23 @@ x-airflow-common: &airflow-common
     # DAG infrastructure config — read by feature_pipeline_daily.py via os.environ
     SPARK_BATCH_IMAGE: "mlops-batch:latest"
     DOCKER_NETWORK: "mlops_default"
+    # Absolute in-container path to materialize_to_redis.py (feature_store/ is
+    # mounted at /opt/airflow/feature_store — see volumes below).
+    MATERIALIZE_SCRIPT_PATH: "/opt/airflow/feature_store/materialize_to_redis.py"
+    TRINO_HOST: "trino"
+    TRINO_PORT: "8080"
     # Install providers at startup (avoids custom image build)
     # standard provider: BashOperator and other core operators moved here in Airflow 3
     _PIP_ADDITIONAL_REQUIREMENTS: >-
       apache-airflow-providers-docker>=3.9.0
       apache-airflow-providers-standard>=1.0.0
+      astronomer-cosmos==1.14.1
+      dbt-core~=1.10.0
+      dbt-trino==1.10.1
   volumes:
     - ./dags:/opt/airflow/dags:ro
+    - ../feature_store:/opt/airflow/feature_store:ro
+    - ../dbt:/opt/airflow/dbt:ro
     - airflow_logs:/opt/airflow/logs
     # DockerOperator needs access to host Docker daemon
     - /var/run/docker.sock:/var/run/docker.sock
@@ -75,6 +85,9 @@ services:
         pip install
           'apache-airflow-providers-docker>=3.9.0'
           'apache-airflow-providers-standard>=1.0.0'
+          'astronomer-cosmos==1.14.1'
+          'dbt-core~=1.10.0'
+          'dbt-trino==1.10.1'
           --quiet &&
         airflow db migrate &&
         airflow users create

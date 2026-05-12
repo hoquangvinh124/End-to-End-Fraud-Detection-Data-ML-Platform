@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: int_customer_window_features
+    description: "1d/7d/30d rolling aggregates per customer_id as of feature_date"
+    columns:
+      - name: customer_id
+        tests: [not_null, unique]
+      - name: feature_date
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_1D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_7D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_30D
+        tests: [not_null]
+
+  - name: int_terminal_window_features
+    description: "1d/7d/30d risk + tx-count aggregates per terminal_id (7-day delay offset)"
+    columns:
+      - name: terminal_id
+        tests: [not_null, unique]
+      - name: feature_date
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_1DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_7DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_30DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_1DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_7DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_30DAY_WINDOW
+        tests: [not_null]

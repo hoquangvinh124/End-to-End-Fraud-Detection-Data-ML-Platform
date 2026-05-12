@@ -33,8 +33,9 @@ from cosmos import (
     ExecutionMode,
     ProfileConfig,
     ProjectConfig,
+    RenderConfig,
 )
-from cosmos.profiles import TrinoProfileMapping
+from cosmos.profiles.trino.base import TrinoBaseProfileMapping
 
 _SPARK_IMAGE = os.environ.get("SPARK_BATCH_IMAGE", "mlops-batch:latest")
 _DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "mlops_default")
@@ -129,7 +130,7 @@ def _dbt_task_group(
         profile_config=ProfileConfig(
             profile_name="fraud_detection",
             target_name="dev",
-            profile_mapping=TrinoProfileMapping(
+            profile_mapping=TrinoBaseProfileMapping(
                 conn_id="trino_default",
                 profile_args={
                     "database": "lakehouse",
@@ -142,9 +143,9 @@ def _dbt_task_group(
         execution_config=ExecutionConfig(
             execution_mode=ExecutionMode.LOCAL,
         ),
+        render_config=RenderConfig(select=[select]),
         operator_args={
             "vars": {"feature_date": "{{ ds }}"},
-            "select": select,
             "on_failure_callback": _notify_discord_failure,
         },
     )

@@ -1,0 +1,53 @@
+version: 2
+
+models:
+  - name: mart_fraud_ml_features
+    description: "Flat ML feature table: one row per transaction with all 15 fraud model features + TX_FRAUD label"
+    columns:
+      - name: transaction_id
+        tests: [not_null, unique]
+      - name: event_timestamp
+        tests: [not_null]
+      - name: TX_AMOUNT
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                inclusive: false
+      - name: IS_WEEKEND
+        tests: [not_null]
+      - name: IS_NIGHT
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_1D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_7D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_30D
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D
+        tests: [not_null]
+      - name: TERMINAL_RISK_1DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_7DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_30DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_1DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_7DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_30DAY_WINDOW
+        tests: [not_null]
+      - name: TX_FRAUD
+        tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+      - name: feature_date
+        tests: [not_null]

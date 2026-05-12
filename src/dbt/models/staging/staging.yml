@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: stg_transactions
+    description: "Normalized transactions: Bronze CDC → Silver-equivalent staging"
+    columns:
+      - name: transaction_id
+        tests:
+          - not_null
+          - unique
+      - name: event_timestamp
+        tests:
+          - not_null
+      - name: customer_id
+        tests:
+          - not_null
+      - name: terminal_id
+        tests:
+          - not_null
+      - name: amount
+        tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              min_value: 0
+              inclusive: false
+      - name: _cdc_op
+        tests:
+          - accepted_values:
+              values: ['r', 'c', 'u', 'd']
+
+  - name: stg_fraud_cases
+    description: "Normalized fraud cases: Bronze CDC → staging with is_fraud derived"
+    columns:
+      - name: transaction_id
+        tests:
+          - not_null
+          - unique
+      - name: is_fraud
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]

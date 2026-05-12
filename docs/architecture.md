@@ -16,20 +16,25 @@
 ### Data Pipeline (blue section)
 - **Kafka** (Strimzi): CDC simulator Python producer → topics
 - **Flink**: stream processing with tumbling + sliding + session windows
-- **Spark**: batch processing, daily feature engineering
+- **Spark**: Bronze ingestion only (CDC → Delta Lake bronze layer on MinIO)
 - **MinIO**: S3-compatible data lake
-- **Delta Lake**: table format on MinIO (ACID)
-- **Trino**: query engine over Delta Lake tables on MinIO
-- **Airflow**: orchestration of Spark/Flink jobs, data validation DAGs
+- **Delta Lake**: table format on MinIO (Bronze + Staging layers, ACID)
+- **dbt + Trino** (dbt-trino 1.10.1, Trino 481): transforms Bronze → Staging (Delta Lake on MinIO via Trino lakehouse catalog) → Intermediate + Marts (ClickHouse via Trino clickhouse catalog)
+- **Trino**: query engine over Delta Lake tables on MinIO (Bronze/Staging) AND ClickHouse tables (Intermediate/Marts)
+- **ClickHouse** (head-distroless): Gold/serving layer storing intermediate + mart tables (MergeTree engine)
+  - `intermediate.int_customer_window_features` — customer 1D/7D/30D window features
+  - `intermediate.int_terminal_window_features` — terminal 1D/7D/30D window features with fraud delay offset
+  - `marts.mart_fraud_ml_features` — flat ML feature table joining all features
+- **Airflow**: orchestration with **astronomer-cosmos 1.14.1** DbtTaskGroups replacing Spark Silver/Gold batch jobs → `[bronze] → dbt_staging → dbt_intermediate → dbt_marts → materialize_online_features`
 - **>100GB** data via high-throughput Kafka producer
 - **DataHub**: central metadata store (PostgreSQL) for data catalog, schema registry, feature definitions
 
 ### Feature Store (green section)
 - **Feast**: feature store (`src/feature_store/`)
-  - Offline store: **file** (reads Gold Delta Parquet files from MinIO via S3 FileSource)
+  - Offline store: **file** (reads Gold Delta Parquet files from MinIO via S3 FileSource for training data from historical Gold)
   - Online store: **Redis** (<10ms lookup)
   - Three feature views: `fraud_ml_features_view` (offline, training), `customer_features_view` + `terminal_features_view` (online+offline)
-  - Nightly materialization: `materialize_to_redis.py` called by Airflow BashOperator after `assemble_ml_features`
+  - Materialization: direct ClickHouse reads via **clickhouse-connect 0.15.1** → `write_to_online_store()` (bypasses offline store file-based reads)
 
 ### Training & Registry (green section)
 - **MLflow**: experiment tracking + model registry
@@ -57,5 +62,6 @@
 ### Storage (shared)
 - PostgreSQL: 1 instance, multiple DBs (mlflow_db, airflow_db)
 - Redis: standalone (Feast online store)
-- MinIO: data lake (Delta Lake tables, raw data)
+- MinIO: data lake (Delta Lake tables for Bronze/Staging, raw data)
+- ClickHouse: Gold/serving layer (Intermediate + Marts tables, MergeTree engine)
 - GCS: MLflow artifacts, model registry

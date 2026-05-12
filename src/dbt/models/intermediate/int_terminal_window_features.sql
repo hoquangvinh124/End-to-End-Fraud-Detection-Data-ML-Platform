@@ -6,9 +6,13 @@
     }
 ) }}
 
-{% set feature_date = var('feature_date', 'current_date - interval \'1\' day') %}
+{% set feature_date = var('feature_date', none) %}
+{% if feature_date %}
+    {% set fd_expr = "DATE '" ~ feature_date ~ "'" %}
+{% else %}
+    {% set fd_expr = "current_date - interval '1' day" %}
+{% endif %}
 
--- Attach fraud label; missing fraud_case rows → is_fraud = false (legitimate)
 WITH labeled AS (
     SELECT
         t.terminal_id,
@@ -17,66 +21,63 @@ WITH labeled AS (
     FROM {{ ref('stg_transactions') }} t
     LEFT JOIN {{ ref('stg_fraud_cases') }} f
         ON t.transaction_id = f.transaction_id
-    WHERE t.event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '37' DAY
-                           AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+    WHERE t.event_date BETWEEN CAST({{ fd_expr }} AS DATE) - INTERVAL '36' DAY
+                           AND CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
 )
 
 SELECT
     terminal_id,
-    CAST({{ feature_date }} AS DATE)                                                AS feature_date,
+    CAST({{ fd_expr }} AS DATE)                                                     AS feature_date,
 
-    -- 1-day window (delay-offset: [fd-8, fd-7])
-    COUNT(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '8' DAY
-                                   AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+    -- 1-day window (delay-offset: fd-7)
+    COUNT(CASE WHEN event_date = CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                THEN 1 END)
         AS TERMINAL_NB_TX_1DAY_WINDOW,
 
     COALESCE(
         CAST(
-            SUM(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '8' DAY
-                                         AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+            SUM(CASE WHEN event_date = CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                      AND is_fraud THEN 1.0 END)
             /
-            NULLIF(COUNT(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '8' DAY
-                                              AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+            NULLIF(COUNT(CASE WHEN event_date = CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                               THEN 1 END), 0)
         AS DOUBLE),
         0.0
     )   AS TERMINAL_RISK_1DAY_WINDOW,
 
-    -- 7-day window (delay-offset: [fd-14, fd-7])
-    COUNT(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '14' DAY
-                                   AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+    -- 7-day window (delay-offset: [fd-13, fd-7])
+    COUNT(CASE WHEN event_date BETWEEN CAST({{ fd_expr }} AS DATE) - INTERVAL '13' DAY
+                                   AND CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                THEN 1 END)
         AS TERMINAL_NB_TX_7DAY_WINDOW,
 
     COALESCE(
         CAST(
-            SUM(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '14' DAY
-                                         AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+            SUM(CASE WHEN event_date BETWEEN CAST({{ fd_expr }} AS DATE) - INTERVAL '13' DAY
+                                         AND CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                      AND is_fraud THEN 1.0 END)
             /
-            NULLIF(COUNT(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '14' DAY
-                                              AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+            NULLIF(COUNT(CASE WHEN event_date BETWEEN CAST({{ fd_expr }} AS DATE) - INTERVAL '13' DAY
+                                              AND CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                               THEN 1 END), 0)
         AS DOUBLE),
         0.0
     )   AS TERMINAL_RISK_7DAY_WINDOW,
 
-    -- 30-day window (delay-offset: [fd-37, fd-7])
-    COUNT(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '37' DAY
-                                   AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+    -- 30-day window (delay-offset: [fd-36, fd-7])
+    COUNT(CASE WHEN event_date BETWEEN CAST({{ fd_expr }} AS DATE) - INTERVAL '36' DAY
+                                   AND CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                THEN 1 END)
         AS TERMINAL_NB_TX_30DAY_WINDOW,
 
     COALESCE(
         CAST(
-            SUM(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '37' DAY
-                                         AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+            SUM(CASE WHEN event_date BETWEEN CAST({{ fd_expr }} AS DATE) - INTERVAL '36' DAY
+                                         AND CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                      AND is_fraud THEN 1.0 END)
             /
-            NULLIF(COUNT(CASE WHEN event_date BETWEEN CAST({{ feature_date }} AS DATE) - INTERVAL '37' DAY
-                                              AND CAST({{ feature_date }} AS DATE) - INTERVAL '7' DAY
+            NULLIF(COUNT(CASE WHEN event_date BETWEEN CAST({{ fd_expr }} AS DATE) - INTERVAL '36' DAY
+                                              AND CAST({{ fd_expr }} AS DATE) - INTERVAL '7' DAY
                               THEN 1 END), 0)
         AS DOUBLE),
         0.0

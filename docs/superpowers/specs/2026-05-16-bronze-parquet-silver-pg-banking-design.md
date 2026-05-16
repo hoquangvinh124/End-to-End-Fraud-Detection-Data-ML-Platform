@@ -1,8 +1,8 @@
-# Design: Bronze → Parquet, Silver pg_banking namespace, Trino allow-drop-table fix
+# Design: Bronze → Parquet, Silver pg_banking namespace, dbt folder restructure, Trino allow-drop-table fix
 
 **Date:** 2026-05-16
 **Status:** Approved
-**Scope:** Fix Trino ClickHouse connector error; refactor Bronze jobs to plain Parquet; refactor Silver jobs to read Parquet (not Delta CDF); align Silver Hive namespace to `pg_banking`; update dbt sources to read from Silver.
+**Scope:** Fix Trino ClickHouse connector error; refactor Bronze jobs to plain Parquet; refactor Silver jobs to read Parquet (not Delta CDF); align Silver Hive namespace to `pg_banking`; restructure dbt model folders by source/entity/department; rename dbt project to `ABC_Bank`; update dbt sources to read from Silver.
 
 ---
 
@@ -19,6 +19,10 @@ Three issues surfaced when running the dbt+Trino+ClickHouse pipeline:
 4. **Silver Hive namespace is `banking`** — too generic, does not communicate source system. `pg_banking` (PostgreSQL OLTP banking domain) is more precise.
 
 5. **dbt sources point to Bronze** — `sources.yml` references `lakehouse.bronze.*`. With Silver now owning normalized data, dbt staging models should read from `lakehouse.pg_banking.*` (Silver).
+
+6. **dbt model folder structure is flat** — all staging models sit together regardless of source, all intermediate models sit together regardless of entity. As the project grows this becomes hard to navigate. Models should be grouped: staging by source system, intermediate by entity, marts by department/consumer.
+
+7. **dbt project name is `fraud_detection`** — should be `ABC_Bank` to reflect the organization owning the platform.
 
 ---
 
@@ -87,27 +91,87 @@ Bronze output: plain Parquet files, append mode, checkpoint-tracked.
 - Silver still writes Delta Lake with CDF enabled (unchanged — dbt and downstream systems rely on this)
 - Quarantine path, MERGE logic, validation, type casting: unchanged
 
-### 3.4 dbt `sources.yml`
+### 3.4 dbt Folder Restructure + Project Rename
 
-**File:** `src/dbt/models/staging/sources.yml`
+**Project name:** `fraud_detection` → `ABC_Bank` (affects `dbt_project.yml` `name:` and `profile:`, `profiles.yml` top-level key)
 
-```diff
-  sources:
-    - name: bronze
--     database: lakehouse
--     schema: bronze
-+     database: lakehouse
-+     schema: pg_banking
-      tables:
-        - name: transactions
--         description: "CDC Bronze table: banking.transactions via Debezium"
-+         description: "Silver normalized table: pg_banking.transactions (Delta Lake)"
-        - name: fraud_cases
--         description: "CDC Bronze table: banking.fraud_cases via Debezium"
-+         description: "Silver normalized table: pg_banking.fraud_cases (Delta Lake)"
+**New folder structure:**
+
+```
+src/dbt/models/
+├── staging/
+│   └── banking_pg/                        # grouped by source system
+│       ├── sources.yml
+│       ├── staging.yml
+│       ├── stg_transactions.sql
+│       └── stg_fraud_cases.sql
+├── intermediate/
+│   ├── customer/                          # grouped by entity
+│   │   └── int_customers_windowed.sql     # renamed from int_customer_window_features.sql
+│   └── terminal/                          # grouped by entity
+│       └── int_terminals_windowed.sql     # renamed from int_terminal_window_features.sql
+└── marts/
+    └── machine_learning/                  # grouped by department/consumer
+        └── mart_fraud_ml_features.sql
 ```
 
-> The dbt source name remains `bronze` to avoid renaming all `{{ source('bronze', ...) }}` references in staging models. Only the physical schema changes.
+**`dbt_project.yml` model config:**
+
+```yaml
+name: ABC_Bank
+profile: ABC_Bank
+
+models:
+  ABC_Bank:
+    staging:
+      banking_pg:
+        +database: lakehouse
+        +schema: pg_banking
+        +materialized: incremental
+    intermediate:
+      customer:
+        +database: clickhouse
+        +schema: intermediate
+        +materialized: incremental
+      terminal:
+        +database: clickhouse
+        +schema: intermediate
+        +materialized: incremental
+    marts:
+      machine_learning:
+        +database: clickhouse
+        +schema: marts
+        +materialized: table
+```
+
+**`profiles.yml`:**
+
+```yaml
+ABC_Bank:          # renamed from fraud_detection
+  target: dev
+  outputs:
+    dev:
+      ...          # connection config unchanged
+```
+
+### 3.5 dbt `sources.yml`
+
+**File:** `src/dbt/models/staging/banking_pg/sources.yml`
+
+```yaml
+version: 2
+sources:
+  - name: silver_pg_banking
+    database: lakehouse
+    schema: pg_banking
+    tables:
+      - name: transactions
+        description: "Silver normalized table: pg_banking.transactions (Delta Lake)"
+      - name: fraud_cases
+        description: "Silver normalized table: pg_banking.fraud_cases (Delta Lake)"
+```
+
+> Source name changes from `bronze` → `silver_pg_banking` to be accurate. All `{{ source('bronze', ...) }}` references in staging SQL files must be updated to `{{ source('silver_pg_banking', ...) }}`.
 
 ---
 
@@ -117,9 +181,8 @@ Bronze output: plain Parquet files, append mode, checkpoint-tracked.
 - Silver MERGE logic (transactions: `whenNotMatchedInsertAll`; fraud_cases: LSN-ordered dedup + `whenMatchedUpdateAll`)
 - Silver CDF enabled (`delta.enableChangeDataFeed = true`)
 - Quarantine write to Delta
-- All dbt model SQL logic (`stg_transactions.sql`, `stg_fraud_cases.sql`, intermediate, marts)
-- `dbt_project.yml` model configs
-- ClickHouse intermediate and marts models
+- All dbt model SQL logic (column expressions, window calculations, MERGE conditions)
+- ClickHouse table engine configs in marts
 - Airflow DAG structure
 
 ---
@@ -153,4 +216,14 @@ Bronze output: plain Parquet files, append mode, checkpoint-tracked.
 | MODIFY | `src/cdc_ingestion/cdc_fraud_cases_to_bronze.py` |
 | MODIFY | `src/batch_processing/bronze_to_silver/cdc_transactions_normalize_merge_silver.py` |
 | MODIFY | `src/batch_processing/bronze_to_silver/cdc_fraud_cases_normalize_merge_silver.py` |
-| MODIFY | `src/dbt/models/staging/sources.yml` |
+| MODIFY | `src/dbt/dbt_project.yml` |
+| MODIFY | `src/dbt/profiles.yml` |
+| MOVE + MODIFY | `src/dbt/models/staging/sources.yml` → `staging/banking_pg/sources.yml` |
+| MOVE | `src/dbt/models/staging/staging.yml` → `staging/banking_pg/staging.yml` |
+| MOVE | `src/dbt/models/staging/stg_transactions.sql` → `staging/banking_pg/stg_transactions.sql` |
+| MOVE | `src/dbt/models/staging/stg_fraud_cases.sql` → `staging/banking_pg/stg_fraud_cases.sql` |
+| MOVE + RENAME | `src/dbt/models/intermediate/int_customer_window_features.sql` → `intermediate/customer/int_customers_windowed.sql` |
+| MOVE + RENAME | `src/dbt/models/intermediate/int_terminal_window_features.sql` → `intermediate/terminal/int_terminals_windowed.sql` |
+| MOVE + MODIFY | `src/dbt/models/intermediate/intermediate.yml` → split into `intermediate/customer/` and `intermediate/terminal/` |
+| MOVE | `src/dbt/models/marts/mart_fraud_ml_features.sql` → `marts/machine_learning/mart_fraud_ml_features.sql` |
+| MOVE | `src/dbt/models/marts/marts.yml` → `marts/machine_learning/marts.yml` |

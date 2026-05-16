@@ -16,6 +16,7 @@ from delta.tables import DeltaTable
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
+from pyspark.sql import window as W
 
 JOB_NAME = "silver-transactions"
 
@@ -77,7 +78,6 @@ def cast_types(df: DataFrame) -> DataFrame:
             "_ingested_at",
             "_source_ts_ms",
             "_cdc_ts_ms",
-            "_lsn",
         )
     )
 
@@ -112,21 +112,32 @@ def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
 
 
 def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) -> None:
-    """MERGE new Bronze rows into the Silver transactions Delta table."""
+    """Deduplicate by LSN, then MERGE into Silver transactions Delta table."""
+    window = W.Window.partitionBy("transaction_id").orderBy(
+        F.desc("_lsn"), F.desc("_source_ts")
+    )
+    dedup_df = (
+        batch_df.withColumn("_rn", F.row_number().over(window))
+        .filter(F.col("_rn") == 1)
+        .drop("_rn", "_lsn")
+    )
+
     if DeltaTable.isDeltaTable(spark, silver_path):
         (
             DeltaTable.forPath(spark, silver_path)
             .alias("silver")
             .merge(
-                batch_df.alias("bronze"),
+                dedup_df.alias("bronze"),
                 "silver.transaction_id = bronze.transaction_id",
             )
-            .whenNotMatchedInsertAll()
+            .whenMatchedUpdateAll(condition="bronze._cdc_op != 'd'")
+            .whenNotMatchedInsertAll(condition="bronze._cdc_op != 'd'")
             .execute()
         )
     else:
         (
-            batch_df.write.format("delta")
+            dedup_df.filter(F.col("_cdc_op") != "d")
+            .write.format("delta")
             .mode("overwrite")
             .partitionBy("event_date")
             .save(silver_path)

@@ -161,7 +161,7 @@ ABC_Bank:          # renamed from fraud_detection
 ```yaml
 version: 2
 sources:
-  - name: silver_pg_banking
+  - name: lakehouse
     database: lakehouse
     schema: pg_banking
     tables:
@@ -171,7 +171,9 @@ sources:
         description: "Silver normalized table: pg_banking.fraud_cases (Delta Lake)"
 ```
 
-> Source name changes from `bronze` → `silver_pg_banking` to be accurate. All `{{ source('bronze', ...) }}` references in staging SQL files must be updated to `{{ source('silver_pg_banking', ...) }}`.
+> Source name is `lakehouse` (reflects the Trino query layer, not a specific source system). `schema: pg_banking` carries the source-system identity. This is intentionally generic — future Silver schemas from other sources (e.g. `kafka_events`, `crm_pg`) can be added as separate `sources:` entries under the same `lakehouse` database without changing the source name convention.
+>
+> All `{{ source('bronze', ...) }}` references in staging SQL files must be updated to `{{ source('lakehouse', ...) }}`.
 
 ---
 

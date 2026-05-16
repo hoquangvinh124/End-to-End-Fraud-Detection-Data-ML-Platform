@@ -1,7 +1,25 @@
 services:
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    container_name: cdc-schema-registry
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    depends_on:
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/subjects >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
   kafka:
     image: apache/kafka:3.8.0
-    container_name: fraud-cdc-kafka
+    container_name: kafka
     ports:
       - "9092:9092"
     environment:
@@ -32,8 +50,10 @@ services:
       - kafka_data:/var/lib/kafka/data
 
   kafka-connect:
-    image: quay.io/debezium/connect:3.0
-    container_name: fraud-cdc-connect
+    build:
+      context: .
+      dockerfile: Dockerfile.connect
+    container_name: kafka-connect-cdc
     ports:
       - "8083:8083"
     environment:
@@ -48,6 +68,8 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+      schema-registry:
+        condition: service_healthy
       postgres-oltp:
         condition: service_healthy
     healthcheck:
@@ -57,13 +79,14 @@ services:
       retries: 10
 
   kafka-ui:
-    image: provectuslabs/kafka-ui:v0.7.2
-    container_name: fraud-cdc-kafka-ui
+    image: provectuslabs/kafka-ui
+    container_name: kafka-ui
     ports:
       - "8080:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_NAME: debezium-connect
       KAFKA_CLUSTERS_0_KAFKACONNECT_0_ADDRESS: http://kafka-connect:8083
     depends_on:
@@ -72,17 +95,17 @@ services:
       kafka-connect:
         condition: service_healthy
 
-  connector-init:
+  connector-init-debezium:
     image: curlimages/curl:8.8.0
-    container_name: fraud-cdc-connector-init
-    entrypoint: ["/bin/sh", "/scripts/register-transactions-connector.sh"]
+    container_name: cdc-connector-init
+    entrypoint: ["/bin/sh", "/scripts/connectors/transactions/register.sh"]
     volumes:
       - ./:/scripts:ro
-      - ./transactions-connector.json:/config/transactions-connector.json:ro
+      - ./connectors/transactions/connector.json:/config/connector.json:ro
     environment:
       CONNECT_URL: http://kafka-connect:8083
       CONNECTOR_NAME: transactions-cdc-connector
-      CONFIG_PATH: /config/transactions-connector.json
+      CONFIG_PATH: /config/connector.json
       DB_HOST: ${DB_HOST:-postgres-oltp}
       DB_PORT: ${DB_PORT:-5432}
       DB_USER: ${DB_USER:-postgres}
@@ -92,6 +115,38 @@ services:
       kafka-connect:
         condition: service_healthy
     restart: "no"
+
+  connector-init-fraud-cases:
+    image: curlimages/curl:8.8.0
+    container_name: cdc-connector-init-fraud-cases
+    entrypoint: ["/bin/sh", "/scripts/connectors/fraud-cases/register.sh"]
+    volumes:
+      - ./:/scripts:ro
+      - ./connectors/fraud-cases/connector.json:/config/connector.json:ro
+    environment:
+      CONNECT_URL: http://kafka-connect:8083
+      CONNECTOR_NAME: fraud-cases-cdc-connector
+      CONFIG_PATH: /config/connector.json
+      DB_HOST: ${DB_HOST:-postgres-oltp}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-fraud_bank}
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
+    restart: "no"
+
+  debezium-ui:
+    image: quay.io/debezium/debezium-ui:latest
+    container_name: debezium-ui
+    ports:
+      - "8088:8080"
+    environment:
+      KAFKA_CONNECT_URIS: http://kafka-connect:8083
+    depends_on:
+      kafka-connect:
+        condition: service_healthy
 
 volumes:
   kafka_data:

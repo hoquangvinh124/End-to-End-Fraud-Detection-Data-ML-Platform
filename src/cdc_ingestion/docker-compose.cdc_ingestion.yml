@@ -1,0 +1,21 @@
+# CDC ingestion streaming services.
+# These are long-running Structured Streaming jobs (processingTime trigger).
+# Start with: docker compose -f docker-compose.cdc_ingestion.yml up -d
+services:
+  cdc-transactions:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - /opt/spark/bin/spark-submit
+      - /opt/cdc_ingestion/cdc_transactions_to_bronze.py
+    restart: unless-stopped
+
+  cdc-fraud-cases:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - /opt/spark/bin/spark-submit
+      - /opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py
+    restart: unless-stopped

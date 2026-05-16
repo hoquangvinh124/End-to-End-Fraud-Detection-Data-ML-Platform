@@ -1,0 +1,33 @@
+name: ABC_Bank
+version: '1.0.0'
+config-version: 2
+
+profile: ABC_Bank
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+models:
+  ABC_Bank:
+    staging:
+      banking_pg:
+        +database: lakehouse
+        +schema: pg_banking
+        +materialized: incremental
+    intermediate:
+      customer:
+        +database: clickhouse
+        +schema: intermediate
+        +materialized: incremental
+      terminal:
+        +database: clickhouse
+        +schema: intermediate
+        +materialized: incremental
+    marts:
+      machine_learning:
+        +database: clickhouse
+        +schema: marts
+        +materialized: table

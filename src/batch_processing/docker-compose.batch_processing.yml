@@ -1,0 +1,7 @@
+services:
+  spark-batch:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/opt/spark/bin/spark-submit"]
+    restart: "no"

@@ -1,0 +1,11 @@
+FROM confluentinc/cp-kafka-connect:7.5.0 AS kafka-connector-plugin
+
+RUN confluent-hub install --no-prompt \
+    confluentinc/kafka-connect-avro-converter:8.2.0
+
+
+FROM quay.io/debezium/connect:3.0 AS debezium-connect
+
+COPY --from=kafka-connector-plugin /usr/share/confluent-hub-components /kafka/connect/
+
+USER 1001

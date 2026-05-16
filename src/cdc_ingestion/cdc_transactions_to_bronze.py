@@ -17,6 +17,7 @@ from utils.schema_registry_helpers import fetch_avro_schema
 
 
 def build_spark_session() -> SparkSession:
+    """Create a plain SparkSession without Hive support (not needed for Parquet bronze)."""
     return (
         SparkSession.builder.appName("cdc-transactions-to-bronze")
         .getOrCreate()

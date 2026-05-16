@@ -5,96 +5,50 @@ lightly unwraps the payload, adds CDC metadata columns, and writes plain
 Parquet files to the MinIO bronze bucket on a configurable micro-batch trigger.
 
 Source table schema (banking.fraud_cases):
-  case_id           text        -- internal investigation ID
-  transaction_id    int8        -- FK to banking.transactions
+  case_id           text
+  transaction_id    int8
   customer_id       text
   card_id           text
-  fraud_scenario    int4        -- fraud scenario code (from seed dataset)
+  fraud_scenario    int4
   case_status       text        -- 'open' | 'confirmed' | 'dismissed'
-  resolution_source text        -- e.g. 'chargeback', 'analyst', 'model'
-  reported_at       timestamp   -- when the case was opened
+  resolution_source text
+  reported_at       timestamp
   resolved_at       timestamp   -- NULL until investigation closes
-  loss_amount       numeric     -- confirmed loss (0 until resolved)
+  loss_amount       numeric
   created_at        timestamp
 
 CDC lifecycle: rows are INSERTed when reported (resolved_at NULL),
 then UPDATEd when the investigation closes (resolved_at set, case_status updated).
 
-All configuration is loaded from spark-defaults.conf (baked into the image at
-$SPARK_HOME/conf/spark-defaults.conf). Job parameters live under the
-``spark.bronze.fraud_cases.*`` namespace.
+All configuration is loaded from spark-defaults.conf.
+Job parameters live under the ``spark.bronze.fraud_cases.*`` namespace.
 """
 from __future__ import annotations
-
-from textwrap import dedent
 
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
 from utils.schema_registry_helpers import fetch_avro_schema
 
-BRONZE_DATABASE = "banking"
-BRONZE_TABLE = "fraud_cases_bronze"
-BRONZE_TABLE_FQN = f"{BRONZE_DATABASE}.{BRONZE_TABLE}"
-
 
 def build_spark_session() -> SparkSession:
+    """Create a plain SparkSession without Hive support (not needed for Parquet bronze)."""
     return (
         SparkSession.builder.appName("cdc-fraud-cases-to-bronze")
-        .enableHiveSupport()
         .getOrCreate()
     )
-
-
-def register_fraud_cases_external_table(
-    spark: SparkSession, output_path: str, db_location: str
-) -> None:
-    spark.sql(
-        f"CREATE DATABASE IF NOT EXISTS {BRONZE_DATABASE} LOCATION '{db_location}'"
-    )
-    spark.sql(
-        dedent(
-            f"""
-            CREATE TABLE IF NOT EXISTS {BRONZE_TABLE_FQN}
-            USING DELTA
-            LOCATION '{output_path}'
-            TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
-            """
-        ).strip()
-    )
-    spark.sql(
-        dedent(
-            f"""
-            ALTER TABLE {BRONZE_TABLE_FQN}
-            SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
-            """
-        ).strip()
-    )
-
-
-# ---------------------------------------------------------------------------
-# Transform
-# ---------------------------------------------------------------------------
 
 
 def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
     """Unwrap Debezium Avro envelope and add bronze metadata columns.
 
-    Confluent wire format prefixes each Avro message with 5 bytes:
-    0x00 (magic byte) + 4-byte big-endian schema ID. Those bytes are stripped
-    before passing the payload to ``from_avro``.
-
-    For deletes (op='d') the relevant payload is ``before``; all others use ``after``.
+    Confluent wire format: 1-byte magic (0x00) + 4-byte schema ID = 5 bytes stripped.
+    fraud_cases lifecycle is INSERT + UPDATE only; event.after carries current state.
     """
-    # Confluent wire format: 1-byte magic (0x00) + 4-byte schema ID = 5 bytes.
-    # substring() is 1-indexed in Spark SQL: skip to byte 6, read the rest.
     avro_payload = F.expr("substring(value, 6, length(value) - 5)")
-
     event_col = from_avro(avro_payload, avro_schema_str).alias("event")
     event_df = raw_df.select(event_col)
 
-    # fraud_cases lifecycle is INSERT (reported) + UPDATE (resolved) only —
-    # rows are never deleted. event.after always carries the current row state.
     payload = F.col("event.after")
 
     return event_df.select(
@@ -109,7 +63,6 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
         payload.resolved_at.alias("resolved_at"),
         payload.loss_amount.alias("loss_amount"),
         payload.created_at.alias("created_at"),
-        # Bronze CDC metadata columns
         F.col("event.op").alias("_op"),
         F.concat_ws(
             ".", F.col("event.source.schema"), F.col("event.source.table")
@@ -122,11 +75,6 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
     )
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-
 def main() -> None:
     spark = build_spark_session()
 
@@ -136,9 +84,6 @@ def main() -> None:
     checkpoint_path = spark.conf.get("spark.bronze.fraud_cases.checkpoint.path")
     trigger_interval = spark.conf.get("spark.bronze.trigger.interval")
     sr_url = spark.conf.get("spark.bronze.schema.registry.url")
-    db_location = spark.conf.get("spark.banking.database.location")
-
-    register_fraud_cases_external_table(spark, output_path, db_location)
 
     avro_schema_str = fetch_avro_schema(sr_url, f"{topic}-value")
 
@@ -153,7 +98,7 @@ def main() -> None:
     bronze_df = build_bronze_rows(kafka_df, avro_schema_str)
 
     query = (
-        bronze_df.writeStream.format("delta")
+        bronze_df.writeStream.format("parquet")
         .outputMode("append")
         .option("checkpointLocation", checkpoint_path)
         .trigger(processingTime=trigger_interval)

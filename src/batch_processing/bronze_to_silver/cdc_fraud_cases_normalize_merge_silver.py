@@ -83,6 +83,7 @@ def cast_types(df: DataFrame) -> DataFrame:
         )
         .withColumn("_cdc_ts", (F.col("_cdc_ts_ms") / 1000).cast(T.TimestampType()))
         .withColumn("_silver_updated_at", F.current_timestamp())
+        .withColumn("_deleted", F.lit(False))
         .drop(
             "_source_table",
             "_snapshot",
@@ -143,6 +144,13 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
             .merge(
                 dedup_df.alias("bronze"),
                 "silver.case_id = bronze.case_id",
+            )
+            .whenMatchedUpdate(
+                condition="bronze._cdc_op == 'd'",
+                set={
+                    "_deleted": "true",
+                    "_silver_updated_at": "bronze._silver_updated_at",
+                },
             )
             .whenMatchedUpdateAll(condition="bronze._cdc_op != 'd'")
             .whenNotMatchedInsertAll(condition="bronze._cdc_op != 'd'")

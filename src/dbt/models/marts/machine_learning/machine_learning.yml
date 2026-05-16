@@ -12,9 +12,8 @@ models:
         tests:
           - not_null
           - dbt_utils.accepted_range:
-              arguments:
-                min_value: 0
-                inclusive: false
+              min_value: 0
+              inclusive: false
       - name: IS_WEEKEND
         tests: [not_null]
       - name: IS_NIGHT
@@ -47,7 +46,6 @@ models:
         tests:
           - not_null
           - accepted_values:
-              arguments:
-                values: [0, 1]
+              values: [0, 1]
       - name: feature_date
         tests: [not_null]

@@ -3,6 +3,11 @@ version: 2
 models:
   - name: int_customers_windowed
     description: "1d/7d/30d rolling aggregates per customer_id as of feature_date"
+    tests:
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - customer_id
+            - feature_date
     columns:
       - name: customer_id
         tests: [not_null]

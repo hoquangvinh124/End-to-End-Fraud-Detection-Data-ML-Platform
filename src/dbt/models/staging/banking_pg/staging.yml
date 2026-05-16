@@ -24,6 +24,9 @@ models:
         tests:
           - accepted_values:
               values: ['r', 'c', 'u', 'd']
+      - name: _staging_updated_at
+        tests:
+          - not_null
 
   - name: stg_fraud_cases
     description: "Normalized fraud cases from Silver pg_banking.fraud_cases (is_fraud pre-computed)"
@@ -40,3 +43,6 @@ models:
           - not_null
           - accepted_values:
               values: [true, false]
+      - name: _staging_updated_at
+        tests:
+          - not_null

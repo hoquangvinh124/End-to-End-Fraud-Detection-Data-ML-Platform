@@ -1,9 +1,8 @@
 {{ config(
-    materialized = 'table',
-    properties   = {
-        "engine"   : "'MergeTree'",
-        "order_by" : "ARRAY['feature_date', 'customer_id']"
-    }
+    materialized         = 'incremental',
+    unique_key           = ['customer_id', 'feature_date'],
+    incremental_strategy = 'merge',
+    on_schema_change     = 'fail'
 ) }}
 
 {% set feature_date = var('feature_date', none) %}

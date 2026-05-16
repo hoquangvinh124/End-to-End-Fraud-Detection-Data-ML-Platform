@@ -1,8 +1,8 @@
-name: fraud_detection
+name: ABC_Bank
 version: '1.0.0'
 config-version: 2
 
-profile: fraud_detection
+profile: ABC_Bank
 
 model-paths: ["models"]
 test-paths: ["tests"]
@@ -11,16 +11,23 @@ target-path: "target"
 clean-targets: ["target", "dbt_packages"]
 
 models:
-  fraud_detection:
+  ABC_Bank:
     staging:
-      +database: lakehouse
-      +schema: staging
-      +materialized: incremental
+      banking_pg:
+        +database: lakehouse
+        +schema: pg_banking
+        +materialized: incremental
     intermediate:
-      +database: clickhouse
-      +schema: intermediate
-      +materialized: table
+      customer:
+        +database: clickhouse
+        +schema: intermediate
+        +materialized: incremental
+      terminal:
+        +database: clickhouse
+        +schema: intermediate
+        +materialized: incremental
     marts:
-      +database: clickhouse
-      +schema: marts
-      +materialized: table
+      machine_learning:
+        +database: clickhouse
+        +schema: marts
+        +materialized: table

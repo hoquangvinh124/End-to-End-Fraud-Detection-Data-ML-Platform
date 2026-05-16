@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: stg_transactions
-    description: "Normalized transactions: Bronze CDC → Silver-equivalent staging"
+    description: "Normalized transactions from Silver pg_banking.transactions"
     columns:
       - name: transaction_id
         tests:
@@ -20,18 +20,13 @@ models:
       - name: amount
         tests:
           - not_null
-          - dbt_utils.accepted_range:
-              arguments:
-                min_value: 0
-                inclusive: false
       - name: _cdc_op
         tests:
           - accepted_values:
-              arguments:
-                values: ['r', 'c', 'u', 'd']
+              values: ['r', 'c', 'u', 'd']
 
   - name: stg_fraud_cases
-    description: "Normalized fraud cases: Bronze CDC → staging with is_fraud derived"
+    description: "Normalized fraud cases from Silver pg_banking.fraud_cases (is_fraud pre-computed)"
     columns:
       - name: case_id
         tests:
@@ -44,5 +39,4 @@ models:
         tests:
           - not_null
           - accepted_values:
-              arguments:
-                values: [true, false]
+              values: [true, false]

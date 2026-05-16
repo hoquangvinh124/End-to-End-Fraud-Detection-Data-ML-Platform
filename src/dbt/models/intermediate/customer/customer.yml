@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: int_customers_windowed
+    description: "1d/7d/30d rolling aggregates per customer_id as of feature_date"
+    columns:
+      - name: customer_id
+        tests: [not_null]
+      - name: feature_date
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D
+        tests: [not_null]
+      - name: CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_1D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_7D
+        tests: [not_null]
+      - name: CUSTOMER_AVG_AMOUNT_WINDOW_30D
+        tests: [not_null]

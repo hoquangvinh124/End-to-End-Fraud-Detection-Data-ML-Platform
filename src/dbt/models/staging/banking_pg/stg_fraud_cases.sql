@@ -7,9 +7,9 @@
 
 WITH source AS (
     SELECT *
-    FROM {{ source('bronze', 'fraud_cases') }}
+    FROM {{ source('lakehouse', 'fraud_cases') }}
     {% if is_incremental() %}
-    WHERE _ingested_at > (SELECT MAX(_bronze_ingested_at) FROM {{ this }})
+    WHERE _silver_updated_at > (SELECT MAX(_silver_updated_at) FROM {{ this }})
     {% endif %}
 ),
 
@@ -17,7 +17,7 @@ deduped AS (
     SELECT *,
            ROW_NUMBER() OVER (
                PARTITION BY case_id
-               ORDER BY _ingested_at DESC
+               ORDER BY _silver_updated_at DESC
            ) AS _rn
     FROM source
 )
@@ -25,12 +25,9 @@ deduped AS (
 SELECT
     case_id,
     transaction_id,
-    CAST(
-        COALESCE(case_status = 'confirmed' AND resolved_at IS NOT NULL, FALSE)
-        AS BOOLEAN
-    ) AS is_fraud,
-    _op                AS _cdc_op,
-    _ingested_at       AS _bronze_ingested_at,
+    is_fraud,
+    _cdc_op,
+    _silver_updated_at,
     CURRENT_TIMESTAMP  AS _staging_updated_at
 FROM deduped
 WHERE _rn = 1

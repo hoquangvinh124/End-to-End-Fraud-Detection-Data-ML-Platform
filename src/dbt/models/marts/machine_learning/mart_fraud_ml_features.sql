@@ -57,10 +57,10 @@ SELECT
 
 FROM {{ ref('stg_transactions') }} t
 CROSS JOIN params p
-LEFT JOIN {{ ref('int_customer_window_features') }} c
+LEFT JOIN {{ ref('int_customers_windowed') }} c
     ON  t.customer_id  = c.customer_id
     AND c.feature_date = p.fd
-LEFT JOIN {{ ref('int_terminal_window_features') }} tm
+LEFT JOIN {{ ref('int_terminals_windowed') }} tm
     ON  t.terminal_id  = tm.terminal_id
     AND tm.feature_date = p.fd
 LEFT JOIN fraud_per_tx f

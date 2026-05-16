@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: int_terminals_windowed
+    description: "1d/7d/30d risk + tx-count aggregates per terminal_id (7-day delay offset)"
+    columns:
+      - name: terminal_id
+        tests: [not_null]
+      - name: feature_date
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_1DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_7DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_NB_TX_30DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_1DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_7DAY_WINDOW
+        tests: [not_null]
+      - name: TERMINAL_RISK_30DAY_WINDOW
+        tests: [not_null]

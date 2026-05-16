@@ -1,0 +1,11 @@
+version: 2
+
+sources:
+  - name: lakehouse
+    database: lakehouse
+    schema: pg_banking
+    tables:
+      - name: transactions
+        description: "Silver normalized table: pg_banking.transactions (Delta Lake)"
+      - name: fraud_cases
+        description: "Silver normalized table: pg_banking.fraud_cases (Delta Lake)"

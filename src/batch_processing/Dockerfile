@@ -17,9 +17,7 @@ RUN PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,org.apache.spark:
 COPY spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 
 # Bake all job scripts into the image so no volume mounts are needed at runtime.
-COPY silver/ /opt/silver/
-COPY gold/ /opt/gold/
-COPY utils/ /opt/utils/
+COPY bronze_to_silver/ /opt/bronze_to_silver/
 
 # Add /opt to PYTHONPATH so Silver/Gold jobs can import utils.* at runtime.
 ENV PYTHONPATH /opt

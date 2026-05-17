@@ -8,7 +8,6 @@ from pathlib import Path
 import pandas as pd
 import psycopg
 
-
 CUSTOMER_SEGMENTS = ["mass", "affluent", "small_business", "student"]
 CUSTOMER_REGIONS = ["north", "south", "east", "west", "central"]
 RISK_TIERS = ["low", "medium", "high"]

@@ -1,6 +1,6 @@
-import urllib.request
 import json
 import time
+import urllib.request
 
 
 def fetch_avro_schema(

@@ -1,7 +1,36 @@
+# Bronze-to-Silver batch jobs.
+#
+# Manual run (one-off):
+#   docker compose -f src/batch_processing/docker-compose.batch_processing.yml \
+#     run --rm silver-transactions
+#   docker compose -f src/batch_processing/docker-compose.batch_processing.yml \
+#     run --rm silver-fraud-cases
+#
+# Both services share the external mlops_default network so they can reach
+# MinIO (minio:9000) and Hive Metastore (hive-metastore:9083) as configured
+# in spark-defaults.conf.
+
 services:
-  spark-batch:
+  silver-transactions:
     build:
       context: .
       dockerfile: Dockerfile
     entrypoint: ["/opt/spark/bin/spark-submit"]
+    command: ["/opt/bronze_to_silver/cdc_transactions_normalize_merge_silver.py"]
     restart: "no"
+    networks:
+      - mlops_default
+
+  silver-fraud-cases:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/opt/spark/bin/spark-submit"]
+    command: ["/opt/bronze_to_silver/cdc_fraud_cases_normalize_merge_silver.py"]
+    restart: "no"
+    networks:
+      - mlops_default
+
+networks:
+  mlops_default:
+    external: true

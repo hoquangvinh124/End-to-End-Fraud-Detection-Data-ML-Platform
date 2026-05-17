@@ -14,5 +14,6 @@ include:
   - src/cdc/docker-compose.cdc.yml
   - src/lakehouse/docker-compose.lakehouse.yml
   - src/monitoring/docker-compose.observability.yml
-  - src/batch_processing/docker-compose.batch_processing.yml
+  - src/cdc_ingestion/docker-compose.cdc_ingestion.yml
+  
 

@@ -19,6 +19,7 @@ COPY spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 # Bake CDC ingestion job scripts into the image
 COPY cdc_transactions_to_bronze.py /opt/cdc_ingestion/cdc_transactions_to_bronze.py
 COPY cdc_fraud_cases_to_bronze.py /opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py
+COPY utils/schema_registry_helpers.py /opt/cdc_ingestion/utils/schema_registry_helpers.py
 
 ENV PYTHONPATH /opt
 

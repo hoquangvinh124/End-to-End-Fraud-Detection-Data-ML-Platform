@@ -178,6 +178,20 @@ with DAG(
             doc_md="Reads CDC rows from `cdc.fraud_cases` Kafka topic → appends to `s3a://bronze/cdc/fraud_cases`.",
         )
 
+    # ── Bronze → Silver normalisation (Spark) ────────────────────────────
+    with TaskGroup("silver"):
+        normalize_transactions = _spark_task(
+            task_id="normalize_transactions",
+            script="/opt/bronze_to_silver/cdc_transactions_normalize_merge_silver.py",
+            doc_md="Reads Bronze Parquet `s3a://bronze/cdc/transactions` → casts types, deduplicates by LSN, MERGEs into Silver Delta `s3a://silver/pg_banking/transactions`.",
+        )
+
+        normalize_fraud_cases = _spark_task(
+            task_id="normalize_fraud_cases",
+            script="/opt/bronze_to_silver/cdc_fraud_cases_normalize_merge_silver.py",
+            doc_md="Reads Bronze Parquet `s3a://bronze/cdc/fraud_cases` → casts types, derives `is_fraud`, deduplicates by LSN, MERGEs into Silver Delta `s3a://silver/pg_banking/fraud_cases`.",
+        )
+
     # ── dbt transform layers ──────────────────────────────────────────────
     dbt_staging = _dbt_task_group(
         group_id="dbt_staging",
@@ -210,7 +224,8 @@ with DAG(
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────
-    [ingest_transactions, ingest_fraud_cases] >> dbt_staging
+    [ingest_transactions, ingest_fraud_cases] >> [normalize_transactions, normalize_fraud_cases]
+    [normalize_transactions, normalize_fraud_cases] >> dbt_staging
     dbt_staging >> dbt_intermediate
     dbt_intermediate >> dbt_marts
     dbt_marts >> materialize_online_features

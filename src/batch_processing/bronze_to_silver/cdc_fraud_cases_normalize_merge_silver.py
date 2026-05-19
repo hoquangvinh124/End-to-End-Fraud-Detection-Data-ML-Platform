@@ -1,9 +1,9 @@
-"""Silver fraud_cases batch job: Bronze Parquet → Silver Delta (pg_banking).
+"""Silver fraud_cases batch job: Bronze Parquet → Silver Delta (silver).
 
 Reads new Parquet files from the Bronze bucket incrementally via Spark
 Structured Streaming with trigger(availableNow=True), normalises them,
 and MERGEs the result into a Silver Delta table registered in Hive as
-pg_banking.fraud_cases.
+silver.fraud_cases.
 
 ``is_fraud`` is derived in Silver: case_status='confirmed' AND resolved_at IS NOT NULL.
 All configuration from spark-defaults.conf (``spark.silver.fraud_cases.*``).
@@ -21,9 +21,10 @@ from pyspark.sql import window as W
 
 JOB_NAME = "silver-fraud-cases"
 
-SILVER_DATABASE = "pg_banking"
+SILVER_DATABASE = "silver"
 SILVER_TABLE = "fraud_cases"
 SILVER_TABLE_FQN = f"{SILVER_DATABASE}.{SILVER_TABLE}"
+
 
 
 def build_spark_session() -> SparkSession:
@@ -34,30 +35,28 @@ def build_spark_session() -> SparkSession:
     )
 
 
-def register_fraud_cases_silver_table(
-    spark: SparkSession, silver_path: str, db_location: str
-) -> None:
-    spark.sql(
-        f"CREATE DATABASE IF NOT EXISTS {SILVER_DATABASE} LOCATION '{db_location}'"
-    )
+def ensure_silver_database(spark: SparkSession) -> None:
+    spark.sql(f"CREATE DATABASE IF NOT EXISTS {SILVER_DATABASE}")
+
+
+def register_silver_table(spark: SparkSession, silver_path: str) -> None:
+    """Register the Delta table in Hive after data has been written.
+
+    CREATE TABLE stores the real path in TABLE_PARAMS but Spark's
+    HiveExternalCatalog writes a placeholder to SDS.LOCATION.
+    ALTER TABLE SET LOCATION fixes SDS.LOCATION via the Thrift metastore
+    protocol so Trino's delta_lake connector can resolve it.
+    """
     spark.sql(
         dedent(
             f"""
             CREATE TABLE IF NOT EXISTS {SILVER_TABLE_FQN}
             USING DELTA
             LOCATION '{silver_path}'
-            TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
             """
         ).strip()
     )
-    spark.sql(
-        dedent(
-            f"""
-            ALTER TABLE {SILVER_TABLE_FQN}
-            SET TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
-            """
-        ).strip()
-    )
+    spark.sql(f"ALTER TABLE {SILVER_TABLE_FQN} SET LOCATION '{silver_path}'")
 
 
 def cast_types(df: DataFrame) -> DataFrame:
@@ -66,24 +65,19 @@ def cast_types(df: DataFrame) -> DataFrame:
     is_fraud = True iff case_status = 'confirmed' AND resolved_at IS NOT NULL.
     """
     return (
-        df.withColumn("reported_at", F.to_timestamp("reported_at"))
-        .withColumn("resolved_at", F.to_timestamp("resolved_at"))
-        .withColumn("created_at", F.to_timestamp("created_at"))
-        .withColumn(
+        df.withColumn(
             "loss_amount", F.col("loss_amount").cast(T.DecimalType(12, 2))
         )
         .withColumn(
             "is_fraud",
-            (F.col("case_status") == F.lit("confirmed"))
+            (F.col("case_status") == F.lit("confirmed_fraud"))
             & F.col("resolved_at").isNotNull(),
         )
+        .withColumn("reported_date", F.to_date("reported_at"))
         .withColumnRenamed("_op", "_cdc_op")
         .withColumn(
             "_source_ts", (F.col("_source_ts_ms") / 1000).cast(T.TimestampType())
         )
-        .withColumn("_cdc_ts", (F.col("_cdc_ts_ms") / 1000).cast(T.TimestampType()))
-        .withColumn("_silver_updated_at", F.current_timestamp())
-        .withColumn("_deleted", F.lit(False))
         .drop(
             "_source_table",
             "_snapshot",
@@ -134,33 +128,42 @@ def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) 
     dedup_df = (
         batch_df.withColumn("_rn", F.row_number().over(window))
         .filter(F.col("_rn") == 1)
-        .drop("_rn", "_lsn")
+        .drop("_rn", "_lsn", "_source_ts")
     )
 
-    if DeltaTable.isDeltaTable(spark, silver_path):
-        (
-            DeltaTable.forPath(spark, silver_path)
-            .alias("silver")
-            .merge(
-                dedup_df.alias("bronze"),
-                "silver.case_id = bronze.case_id",
+    deletes_df = dedup_df.filter(F.col("_cdc_op") == "d").select("case_id")
+    upserts_df = dedup_df.filter(F.col("_cdc_op") != "d").drop("_cdc_op")
+
+    is_initialized = DeltaTable.isDeltaTable(spark, silver_path) and bool(
+        DeltaTable.forPath(spark, silver_path).toDF().columns
+    )
+
+    if is_initialized:
+        dt = DeltaTable.forPath(spark, silver_path)
+        if not deletes_df.isEmpty():
+            (
+                dt.alias("silver")
+                .merge(
+                    deletes_df.alias("bronze"),
+                    "silver.case_id = bronze.case_id",
+                )
+                .whenMatchedDelete()
+                .execute()
             )
-            .whenMatchedUpdate(
-                condition="bronze._cdc_op == 'd'",
-                set={
-                    "_deleted": "true",
-                    "_silver_updated_at": "bronze._silver_updated_at",
-                },
+        if not upserts_df.isEmpty():
+            (
+                dt.alias("silver")
+                .merge(
+                    upserts_df.alias("bronze"),
+                    "silver.case_id = bronze.case_id",
+                )
+                .whenMatchedUpdateAll()
+                .whenNotMatchedInsertAll()
+                .execute()
             )
-            .whenMatchedUpdateAll(condition="bronze._cdc_op != 'd'")
-            .whenNotMatchedInsertAll(condition="bronze._cdc_op != 'd'")
-            .execute()
-        )
     else:
         (
-            dedup_df.filter(F.col("_cdc_op") != "d")
-            .withColumn("reported_date", F.to_date("reported_at"))
-            .write.format("delta")
+            upserts_df.write.format("delta")
             .mode("overwrite")
             .partitionBy("reported_date")
             .save(silver_path)
@@ -194,12 +197,14 @@ def main() -> None:
     silver_path = spark.conf.get("spark.silver.fraud_cases.output.path")
     quarantine_path = spark.conf.get("spark.silver.fraud_cases.quarantine.path")
     checkpoint_path = spark.conf.get("spark.silver.fraud_cases.checkpoint.path")
-    db_location = spark.conf.get("spark.pg_banking.database.location")
 
-    register_fraud_cases_silver_table(spark, silver_path, db_location)
+    ensure_silver_database(spark)
+
+    bronze_schema = spark.read.parquet(bronze_path).schema
 
     (
         spark.readStream.format("parquet")
+        .schema(bronze_schema)
         .load(bronze_path)
         .writeStream
         .trigger(availableNow=True)
@@ -215,6 +220,7 @@ def main() -> None:
         .start()
         .awaitTermination()
     )
+    register_silver_table(spark, silver_path)
 
 
 if __name__ == "__main__":

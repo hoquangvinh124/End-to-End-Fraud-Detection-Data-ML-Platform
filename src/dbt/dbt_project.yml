@@ -13,21 +13,21 @@ clean-targets: ["target", "dbt_packages"]
 models:
   ABC_Bank:
     staging:
-      banking_pg:
+      silver:
         +database: lakehouse
-        +schema: pg_banking
-        +materialized: incremental
+        +schema: silver
+        +materialized: view
     intermediate:
       customer:
-        +database: clickhouse
-        +schema: intermediate
-        +materialized: incremental
+        +database: lakehouse
+        +schema: silver
+        +materialized: ephemeral
       terminal:
-        +database: clickhouse
-        +schema: intermediate
-        +materialized: incremental
+        +database: lakehouse
+        +schema: silver
+        +materialized: ephemeral
     marts:
       machine_learning:
         +database: clickhouse
-        +schema: marts
-        +materialized: table
+        +schema: gold
+        +materialized: incremental

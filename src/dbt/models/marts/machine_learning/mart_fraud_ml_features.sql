@@ -1,8 +1,10 @@
 {{ config(
-    materialized = 'table',
+    materialized = 'incremental',
+    unique_key   = 'transaction_id',
+    incremental_strategy = 'append',
+    views_enabled = false,
     properties   = {
-        "engine"   : "'MergeTree'",
-        "order_by" : "ARRAY['feature_date', 'transaction_id']"
+        "engine": "'MergeTree'"
     }
 ) }}
 
@@ -13,9 +15,11 @@
     {% set fd_expr = "current_date - interval '1' day" %}
 {% endif %}
 
+
 WITH params AS (
     SELECT CAST({{ fd_expr }} AS DATE) AS fd
 ),
+
 
 fraud_per_tx AS (
     SELECT
@@ -25,14 +29,17 @@ fraud_per_tx AS (
     GROUP BY transaction_id
 )
 
+
 SELECT
     t.transaction_id,
-    t.event_timestamp,
+    CAST(t.event_timestamp AS timestamp(0))                                          AS event_timestamp,
+
 
     -- Transaction features (direct from staging)
     CAST(t.amount    AS DOUBLE)                                              AS TX_AMOUNT,
     t.is_weekend                                                             AS IS_WEEKEND,
     t.is_night                                                               AS IS_NIGHT,
+
 
     -- Customer window features (LEFT JOIN: new customers default to 0.0)
     COALESCE(CAST(c.CUSTOMER_AVG_AMOUNT_WINDOW_1D              AS DOUBLE), 0.0)  AS CUSTOMER_AVG_AMOUNT_WINDOW_1D,
@@ -42,6 +49,7 @@ SELECT
     COALESCE(CAST(c.CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D  AS DOUBLE), 0.0)  AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D,
     COALESCE(CAST(c.CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D AS DOUBLE), 0.0)  AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D,
 
+
     -- Terminal window features (LEFT JOIN: new terminals default to 0.0)
     COALESCE(CAST(tm.TERMINAL_RISK_1DAY_WINDOW   AS DOUBLE), 0.0)            AS TERMINAL_RISK_1DAY_WINDOW,
     COALESCE(CAST(tm.TERMINAL_RISK_7DAY_WINDOW   AS DOUBLE), 0.0)            AS TERMINAL_RISK_7DAY_WINDOW,
@@ -50,10 +58,13 @@ SELECT
     COALESCE(CAST(tm.TERMINAL_NB_TX_7DAY_WINDOW  AS DOUBLE), 0.0)            AS TERMINAL_NB_TX_7DAY_WINDOW,
     COALESCE(CAST(tm.TERMINAL_NB_TX_30DAY_WINDOW AS DOUBLE), 0.0)            AS TERMINAL_NB_TX_30DAY_WINDOW,
 
+
     -- Fraud label (deduped subquery: missing fraud_case → 0 = legitimate)
     COALESCE(f.tx_fraud_int, 0)                                              AS TX_FRAUD,
 
+
     p.fd                                                                     AS feature_date
+
 
 FROM {{ ref('stg_transactions') }} t
 CROSS JOIN params p

@@ -7,6 +7,7 @@ models:
       - name: transaction_id
         tests: [not_null, unique]
       - name: event_timestamp
+        data_type: timestamp(0)
         tests: [not_null]
       - name: TX_AMOUNT
         tests:

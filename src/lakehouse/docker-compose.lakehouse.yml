@@ -108,10 +108,13 @@ services:
     ports:
       - "8123:8123"
       - "19000:9000"
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-abcbank}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-abcbank}
     volumes:
       - clickhouse_data:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: ["CMD", "clickhouse-client", "--user", "${CLICKHOUSE_USER:-abcbank}", "--password", "${CLICKHOUSE_PASSWORD:-abcbank}", "--query", "SELECT 1"]
       interval: 10s
       timeout: 5s
       retries: 5

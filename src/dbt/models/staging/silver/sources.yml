@@ -1,0 +1,133 @@
+version: 2
+
+sources:
+  - name: silver
+    description: ""
+    tables:
+      - name: fraud_cases
+        description: ""
+        columns:
+          - name: case_id
+            data_type: varchar
+            description: ""
+          - name: transaction_id
+            data_type: bigint
+            description: ""
+          - name: customer_id
+            data_type: varchar
+            description: ""
+          - name: card_id
+            data_type: varchar
+            description: ""
+          - name: fraud_scenario
+            data_type: integer
+            description: ""
+          - name: case_status
+            data_type: varchar
+            description: ""
+          - name: resolution_source
+            data_type: varchar
+            description: ""
+          - name: reported_at
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: resolved_at
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: loss_amount
+            data_type: decimal
+            description: ""
+          - name: created_at
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _cdc_op
+            data_type: varchar
+            description: ""
+          - name: is_fraud
+            data_type: boolean
+            description: ""
+          - name: _source_ts
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _cdc_ts
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _silver_updated_at
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _deleted
+            data_type: boolean
+            description: ""
+          - name: reported_date
+            data_type: date
+            description: ""
+
+      - name: transactions
+        description: ""
+        columns:
+          - name: transaction_id
+            data_type: bigint
+            description: ""
+          - name: event_timestamp
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: customer_id
+            data_type: varchar
+            description: ""
+          - name: account_id
+            data_type: varchar
+            description: ""
+          - name: card_id
+            data_type: varchar
+            description: ""
+          - name: terminal_id
+            data_type: varchar
+            description: ""
+          - name: amount
+            data_type: decimal
+            description: ""
+          - name: currency_code
+            data_type: varchar
+            description: ""
+          - name: transaction_type
+            data_type: varchar
+            description: ""
+          - name: channel_type
+            data_type: varchar
+            description: ""
+          - name: auth_status
+            data_type: varchar
+            description: ""
+          - name: tx_time_seconds
+            data_type: integer
+            description: ""
+          - name: tx_time_days
+            data_type: integer
+            description: ""
+          - name: is_weekend
+            data_type: boolean
+            description: ""
+          - name: is_night
+            data_type: boolean
+            description: ""
+          - name: created_at
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _cdc_op
+            data_type: varchar
+            description: ""
+          - name: event_date
+            data_type: date
+            description: ""
+          - name: _source_ts
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _cdc_ts
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _silver_updated_at
+            data_type: timestamp(3) with time zone
+            description: ""
+          - name: _deleted
+            data_type: boolean
+            description: ""

@@ -2,6 +2,9 @@ FROM apache/spark:4.0.2-python3
 
 USER root
 
+# Install the Delta Lake Python bindings
+RUN pip install --no-cache-dir delta-spark==4.0.0
+
 # Pre-fetch Kafka + Avro + S3A + Delta JARs via Ivy at build time so the container
 # never needs Maven Central at runtime. Resolved JARs land in $SPARK_HOME/jars/.
 RUN PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,org.apache.spark:spark-avro_2.13:4.0.2,org.apache.hadoop:hadoop-aws:3.4.1,io.delta:delta-spark_2.13:4.0.0" && \

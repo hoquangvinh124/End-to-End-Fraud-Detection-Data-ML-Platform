@@ -2,7 +2,7 @@ version: 2
 
 models:
   - name: stg_transactions
-    description: "Normalized transactions from Silver pg_banking.transactions"
+    description: "Normalized transactions from Silver silver.transactions"
     columns:
       - name: transaction_id
         tests:
@@ -20,16 +20,9 @@ models:
       - name: amount
         tests:
           - not_null
-      - name: _cdc_op
-        tests:
-          - accepted_values:
-              values: ['r', 'c', 'u', 'd']
-      - name: _staging_updated_at
-        tests:
-          - not_null
 
   - name: stg_fraud_cases
-    description: "Normalized fraud cases from Silver pg_banking.fraud_cases (is_fraud pre-computed)"
+    description: "Normalized fraud cases from Silver silver.fraud_cases (is_fraud pre-computed)"
     columns:
       - name: case_id
         tests:
@@ -43,6 +36,6 @@ models:
           - not_null
           - accepted_values:
               values: [true, false]
-      - name: _staging_updated_at
+      - name: created_at
         tests:
           - not_null

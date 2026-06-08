@@ -72,9 +72,12 @@ def smoke_test() -> None:
             client.delete_registered_model(MODEL_NAME)
         except Exception:
             pass
-        experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
-        if experiment is not None:
-            mlflow.delete_experiment(experiment.experiment_id)
+        try:
+            experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
+            if experiment is not None:
+                mlflow.delete_experiment(experiment.experiment_id)
+        except Exception:
+            pass
         print("✓ Cleaned up.")
 
     print()

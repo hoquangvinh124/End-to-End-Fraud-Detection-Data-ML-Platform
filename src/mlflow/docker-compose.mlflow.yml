@@ -1,0 +1,69 @@
+# MLflow tracking server + model registry.
+#
+# Usage (standalone — requires MinIO from lakehouse):
+#   docker compose -f src/lakehouse/docker-compose.lakehouse.yml \
+#                  -f src/mlflow/docker-compose.mlflow.yml up -d
+#   open http://localhost:5000
+#
+# Usage (full stack via root compose):
+#   docker compose up -d mlflow-server
+#
+# Artifact storage: MinIO s3://mlops-artifacts/mlflow/
+#   Bucket is created by src/lakehouse/init/create-buckets.sh on first minio-init run.
+#
+# Backend metadata: mlflow-postgres (internal, port not exposed)
+#   Database: mlflow / User: mlflow / Password: mlflow
+#
+# --serve-artifacts: server proxies artifact uploads/downloads to MinIO.
+#   Downstream clients only need MLFLOW_TRACKING_URI=http://localhost:5000.
+
+services:
+  mlflow-postgres:
+    image: postgres:16
+    container_name: mlflow-postgres
+    hostname: mlflow-postgres
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - mlflow_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow -d mlflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  mlflow-server:
+    image: ghcr.io/mlflow/mlflow:v2.22.0
+    container_name: mlflow-server
+    hostname: mlflow-server
+    ports:
+      - "5000:5000"
+    environment:
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minio12345}
+    command: >
+      mlflow server
+        --backend-store-uri postgresql://mlflow:mlflow@mlflow-postgres/mlflow
+        --artifacts-destination s3://mlops-artifacts/mlflow
+        --serve-artifacts
+        --host 0.0.0.0
+        --port 5000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      mlflow-postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mlflow_postgres_data:

@@ -21,38 +21,62 @@ MODEL_NAME = "smoke-test-model"
 
 def smoke_test() -> None:
     mlflow.set_tracking_uri(TRACKING_URI)
-    mlflow.set_experiment(EXPERIMENT_NAME)
 
-    # Log a run with params, metrics, and a model artifact
-    with mlflow.start_run() as run:
-        mlflow.log_params({"n_features": 4, "solver": "lbfgs"})
-        mlflow.log_metric("accuracy", 0.95)
+    try:
+        mlflow.set_experiment(EXPERIMENT_NAME)
+    except Exception as exc:
+        raise SystemExit(
+            f"\n✗ Cannot reach MLflow at {TRACKING_URI}\n"
+            "  Start the stack first:\n"
+            "    docker compose -f src/lakehouse/docker-compose.lakehouse.yml \\\n"
+            "                   -f src/mlflow/docker-compose.mlflow.yml up -d\n"
+            f"  Original error: {exc}"
+        ) from exc
 
-        rng = np.random.default_rng(seed=42)
-        X = rng.standard_normal((100, 4))
-        y = (X[:, 0] > 0).astype(int)
-        model = LogisticRegression(solver="lbfgs").fit(X, y)
-
-        mlflow.sklearn.log_model(
-            model,
-            artifact_path="model",
-            registered_model_name=MODEL_NAME,
-        )
-        run_id = run.info.run_id
-
-    print(f"✓ Tracking OK  (run_id={run_id[:8]}…)")
-
-    # Verify model appears in registry
     client = mlflow.tracking.MlflowClient()
-    versions = client.search_model_versions(f"name='{MODEL_NAME}'")
-    assert len(versions) > 0, "Model was not registered!"
-    print(f"✓ Registry OK  (version {versions[0].version})")
 
-    # Cleanup — remove model and experiment so the registry stays clean
-    client.delete_registered_model(MODEL_NAME)
-    experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
-    mlflow.delete_experiment(experiment.experiment_id)
-    print("✓ Cleaned up.")
+    try:
+        # Log a run with params, metrics, and a model artifact
+        with mlflow.start_run() as run:
+            mlflow.log_params({"n_features": 4, "solver": "lbfgs"})
+            mlflow.log_metric("accuracy", 0.95)
+
+            rng = np.random.default_rng(seed=42)
+            X = rng.standard_normal((100, 4))
+            y = (X[:, 0] > 0).astype(int)
+            model = LogisticRegression(solver="lbfgs").fit(X, y)
+
+            mlflow.sklearn.log_model(
+                model,
+                artifact_path="model",
+                registered_model_name=MODEL_NAME,
+            )
+            run_id = run.info.run_id
+
+        print(f"✓ Tracking OK  (run_id={run_id[:8]}…)")
+
+        # Verify model appears in registry
+        versions = client.search_model_versions(f"name='{MODEL_NAME}'")
+        if not versions:
+            raise RuntimeError("Model was not registered!")
+        version = versions[0]
+        if version.status != "READY":
+            raise RuntimeError(
+                f"Model registered but not READY: status={version.status}"
+            )
+        print(f"✓ Registry OK  (version {version.version}, status={version.status})")
+
+    finally:
+        # Best-effort cleanup — runs even if assertions or logging fail
+        try:
+            client.delete_registered_model(MODEL_NAME)
+        except Exception:
+            pass
+        experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
+        if experiment is not None:
+            mlflow.delete_experiment(experiment.experiment_id)
+        print("✓ Cleaned up.")
+
     print()
     print("Stack is healthy. Delete scripts/smoke_test_mlflow.py when done.")
 

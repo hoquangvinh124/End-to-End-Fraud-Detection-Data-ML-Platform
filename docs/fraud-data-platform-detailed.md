@@ -745,17 +745,19 @@ The request contains:
 
 Then:
 
-1. FastAPI receives the request.
-2. Transformer fetches online features from Redis via Feast.
-3. Request-time features are combined with online state.
-4. Triton runs the model.
-5. Prediction event is emitted for monitoring and feedback.
+1. Traefik receives the request at the GKE edge.
+2. Traefik routes the request to the KServe InferenceService.
+3. Transformer fetches online features from Redis via Feast.
+4. Request-time features are combined with online state.
+5. Triton runs the model.
+6. Prediction event is emitted for monitoring and feedback.
 
 ## 15.2 Current repository status
 
 The current API still accepts a full precomputed feature vector.
 
 That is acceptable as a temporary implementation state, but the architecture should explicitly call it out as transitional rather than as the final serving contract.
+FastAPI remains the current local prototype API, not the target GKE entrypoint.
 
 ## 15.3 Why this transition matters
 
@@ -767,6 +769,7 @@ The improved architecture answers that by distinguishing:
 
 - current prototype serving path
 - target production-like serving path
+- Traefik edge routing versus in-cluster inference serving
 
 ## 16. Data Quality, Governance, and Security
 
@@ -797,14 +800,13 @@ The platform should define quality checks at each layer.
 
 ## 16.2 Governance and metadata
 
-DataHub is best positioned as:
+Governance should stay lightweight in this version:
 
-- metadata catalog
-- lineage tracker
-- glossary and ownership registry
-- discoverability layer for datasets and features
+- document dataset and feature ownership in the repo
+- keep lineage visible through source tables, dbt models, and Feast definitions
+- treat schema and feature contracts as code, not as a separate platform requirement
 
-It is better not to describe DataHub as the Kafka schema registry unless you actually implement that role. The safer statement is that schema contracts are controlled at ingestion, while DataHub catalogs datasets and lineage.
+This keeps metadata honest without adding a dedicated catalog service before the core pipeline is stable.
 
 ## 16.3 PII and sensitive financial data
 
@@ -892,11 +894,11 @@ This section is useful when presenting or defending the architecture.
 | Feast | feature contract across offline and online contexts |
 | Redis | low-latency online feature serving |
 | MLflow | experiment tracking and model registry |
+| Traefik | GKE ingress / edge routing for public traffic |
 | KServe | inference routing and serving abstraction |
 | Triton | low-latency model inference runtime |
 | Knative Eventing | prediction event fan-out |
 | Prometheus, Loki, Jaeger, OTel, Grafana | observability |
-| DataHub | metadata, lineage, discovery, ownership |
 
 ## 20. Recommended Improvements to Keep in Mind
 
@@ -954,7 +956,7 @@ If delayed-label timing is not implemented carefully, leakage can invalidate the
 
 ### 21.4 Governance tooling can become decorative
 
-If DataHub is listed but not tied to concrete metadata or lineage practice, it may look like architecture inflation. The docs should therefore tie it to dataset discovery, ownership, and lineage explicitly.
+If governance tooling is listed without a concrete operating model, it may look like architecture inflation. Keep governance lightweight until the repo has a real operational need for more structure.
 
 ## 22. Recommended Implementation Order
 
@@ -962,45 +964,32 @@ Even though this document is architectural, a practical order helps anchor the d
 
 ### Phase 1: Source simulation and CDC foundation
 
+This is the first thing to do.
+
 - normalize seed dataset into source tables
 - stand up PostgreSQL source schemas
 - connect Debezium to Kafka
 - validate snapshot plus streaming CDC
 
-### Phase 2: Bronze and Silver lakehouse
+### Phase 2: Bronze and Silver correctness
 
 - land lightly unwrapped CDC into Bronze Delta tables with Spark Structured Streaming
 - create Silver canonical transaction and dimension tables
 - add data quality, checkpointing, and quarantine logic
 
-### Phase 3: Flink stateful feature computation
+### Phase 3: Feature serving alignment
 
 - compute customer and terminal rolling features
 - emit feature update topics
 - persist enriched outputs into Gold
-
-### Phase 4: Batch training path
-
-- backfill feature tables with Spark
-- build point-in-time training datasets
-- log experiments and models in MLflow
-
-### Phase 5: Feature store and serving alignment
-
-- register feature definitions in Feast
 - materialize online features into Redis
-- align FastAPI and KServe path to consume request-time inputs plus online features
-
-### Phase 6: Platform hardening
-
-- observability across Kafka, Flink, Spark, Redis, and feature freshness
-- 100GB scale test and performance study
-- governance and lineage polish
+- expose KServe behind Traefik as the target GKE path
+- keep the current FastAPI prototype separate from the target GKE serving path
 
 ## 23. Final Positioning Statement
 
 If this architecture needs to be summarized in one paragraph during review, the strongest version is this:
 
-This project starts from a historical flat fraud dataset but upgrades it into a realistic financial data platform by normalizing it into simulated OLTP source systems, capturing true row-level CDC with Debezium, landing lightly unwrapped Kafka CDC into Delta Bronze tables on MinIO through Spark Structured Streaming, and then exposing curated features through Flink, Spark, and Feast for both offline training and online inference. The architecture explicitly models delayed fraud labels, Bronze-Silver-Gold contracts, point-in-time correctness, and the distinction between the current prototype serving path and the target production-like serving path.
+This project starts from a historical flat fraud dataset but upgrades it into a realistic financial data platform by normalizing it into simulated OLTP source systems, capturing true row-level CDC with Debezium, landing lightly unwrapped Kafka CDC into Delta Bronze tables on MinIO through Spark Structured Streaming, and then exposing curated features through Flink, Spark, and Feast for both offline training and online inference. The architecture explicitly models delayed fraud labels, Bronze-Silver-Gold contracts, point-in-time correctness, and the distinction between the current prototype API and the target Traefik → KServe → Triton serving path.
 
 That statement is concise, honest, and technically defensible.

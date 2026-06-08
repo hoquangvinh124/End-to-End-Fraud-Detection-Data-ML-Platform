@@ -25,7 +25,6 @@
   - `marts.mart_fraud_ml_features` — flat ML feature table joining all features
 - **Airflow**: orchestration with **astronomer-cosmos 1.14.1** DbtTaskGroups replacing Spark Silver/Gold batch jobs → `[bronze] → dbt_staging → dbt_intermediate → dbt_marts → materialize_online_features`
 - **>100GB** data via high-throughput Kafka producer
-- **DataHub**: central metadata store (PostgreSQL) for data catalog, schema registry, feature definitions
 
 ### Feature Store (green section)
 - **Feast**: feature store (`src/feature_store/`)
@@ -42,11 +41,12 @@
 - Auto-deploy promoted model to KServe/Triton
 
 ### Model Serving (orange section)
-- **FastAPI**: gateway (/health, /metrics, route to KServe for /predict)
-- **KServe InferenceService**: main prediction path
+- **Traefik**: GKE ingress / edge router (TLS termination, host/path routing)
+- **KServe InferenceService**: main prediction path behind Traefik
   - Transformer: Feast online lookup (Redis) → build feature vector
   - Predictor: **Triton Inference Server** (ONNX runtime)
 - XGBoost → ONNX export
+- **FastAPI**: current local/prototype API only, not part of the target GKE serving path
 - **Knative Eventing**: capture prediction CloudEvents → OTel Collector
 
 ### Observability

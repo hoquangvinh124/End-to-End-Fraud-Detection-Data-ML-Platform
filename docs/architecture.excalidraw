@@ -612,9 +612,9 @@
       "groupIds": [], "frameId": null, "roundness": null,
       "seed": 2019, "version": 1, "versionNonce": 2019, "isDeleted": false,
       "boundElements": null, "updated": 1, "link": null, "locked": false,
-      "text": "FastAPI Gateway", "fontSize": 16, "fontFamily": 1,
+      "text": "Traefik Ingress", "fontSize": 16, "fontFamily": 1,
       "textAlign": "center", "verticalAlign": "middle",
-      "containerId": "b19", "originalText": "FastAPI Gateway",
+      "containerId": "b19", "originalText": "Traefik Ingress",
       "autoResize": true, "lineHeight": 1.25
     },
     {
@@ -626,9 +626,9 @@
       "groupIds": [], "frameId": null, "roundness": null,
       "seed": 6002, "version": 1, "versionNonce": 6002, "isDeleted": false,
       "boundElements": null, "updated": 1, "link": null, "locked": false,
-      "text": "/health  /metrics  /predict", "fontSize": 14, "fontFamily": 1,
+      "text": "TLS / host-path routing", "fontSize": 14, "fontFamily": 1,
       "textAlign": "center", "verticalAlign": "top",
-      "containerId": null, "originalText": "/health  /metrics  /predict",
+      "containerId": null, "originalText": "TLS / host-path routing",
       "autoResize": true, "lineHeight": 1.25
     },
     {

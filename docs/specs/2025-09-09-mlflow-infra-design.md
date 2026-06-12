@@ -4,7 +4,7 @@
 
 **Architecture:** New `src/mlflow/` subsystem folder following the per-subsystem pattern already used for CDC, lakehouse, batch, orchestration, and monitoring. MLflow server keeps its own Postgres for tracking metadata (runs, experiments, model versions) so the compose is self-explanatory. Artifacts land in a new MinIO bucket `mlops-artifacts` that is already reachable inside the Docker network.
 
-**Tech stack:** `ghcr.io/mlflow/mlflow:v2.22.0`, `postgres:16`, MinIO (existing `lakehouse-minio`), `mlflow` Python SDK.
+**Tech stack:** `ghcr.io/mlflow/mlflow:v3.13.0`, `postgres:16`, MinIO (existing `lakehouse-minio`), `mlflow` Python SDK.
 
 **Scope of this spec:** Infrastructure only — Docker Compose, bucket creation, dependency wiring, and a throwaway smoke-test script. Training pipeline and API registry integration are separate specs.
 
@@ -19,7 +19,7 @@ Two services:
 | Service | Image | Role |
 |---|---|---|
 | `mlflow-postgres` | `postgres:16` | Tracks experiments, runs, params, metrics, model versions. Internal only (no host port). |
-| `mlflow-server` | `ghcr.io/mlflow/mlflow:v2.22.0` | Tracking server + model registry UI at `localhost:5000`. |
+| `mlflow-server` | `ghcr.io/mlflow/mlflow:v3.13.0` | Tracking server + model registry UI at `localhost:5000`. |
 
 `mlflow-server` startup command:
 ```
@@ -59,7 +59,7 @@ Add to the `include:` list:
 
 Add to `[dependency-groups] dev`:
 ```
-mlflow>=2.22.0,<3
+mlflow>=3.13.0,<4
 ```
 
 ### 5. `scripts/smoke_test_mlflow.py` *(temporary — delete after training pipeline)*
@@ -137,7 +137,7 @@ del scripts\smoke_test_mlflow.py
 | `src/lakehouse/init/create-buckets.sh` | MODIFY — add `mlops-artifacts` |
 | `docker-compose.yml` | MODIFY — add include |
 | `scripts/smoke_test_mlflow.py` | CREATE (temporary) |
-| `pyproject.toml` | MODIFY — add `mlflow>=2.22.0,<3` to dev group |
+| `pyproject.toml` | MODIFY — add `mlflow>=3.13.0,<4` to dev group |
 
 ---
 

@@ -6,7 +6,7 @@
 
 **Architecture:** New `src/mlflow/` subsystem folder mirroring the pattern of `src/lakehouse/`, `src/monitoring/`, etc. `mlflow-server` gets its own `mlflow-postgres` (no shared backend confusion). Artifact blobs go into a new `mlops-artifacts` MinIO bucket. Server uses `--serve-artifacts` so downstream clients only need `MLFLOW_TRACKING_URI` — no S3 credentials required on the client side.
 
-**Tech Stack:** `ghcr.io/mlflow/mlflow:v2.22.0`, `postgres:16`, MinIO (existing `lakehouse-minio`), `mlflow>=2.22.0` Python SDK, `uv`.
+**Tech Stack:** `ghcr.io/mlflow/mlflow:v3.13.0`, `postgres:16`, MinIO (existing `lakehouse-minio`), `mlflow>=3.13.0` Python SDK, `uv`.
 
 **Spec:** `docs/specs/2025-09-09-mlflow-infra-design.md`
 
@@ -19,7 +19,7 @@
 | `src/mlflow/docker-compose.mlflow.yml` | CREATE | MLflow tracking server + dedicated Postgres |
 | `src/lakehouse/init/create-buckets.sh` | MODIFY | Add `mlops-artifacts` bucket to MinIO init |
 | `docker-compose.yml` | MODIFY | Include mlflow compose in master stack |
-| `pyproject.toml` | MODIFY | Add `mlflow>=2.22.0,<3` to `[dependency-groups] dev` |
+| `pyproject.toml` | MODIFY | Add `mlflow>=3.13.0,<4` to `[dependency-groups] dev` |
 | `scripts/smoke_test_mlflow.py` | CREATE (temp) | One-time verify script — delete after passing |
 
 ---
@@ -122,7 +122,7 @@ services:
     restart: unless-stopped
 
   mlflow-server:
-    image: ghcr.io/mlflow/mlflow:v2.22.0
+    image: ghcr.io/mlflow/mlflow:v3.13.0
     container_name: mlflow-server
     hostname: mlflow-server
     ports:
@@ -206,7 +206,7 @@ Open `pyproject.toml`. Current `[dependency-groups] dev` block ends with:
 Replace that closing section with:
 ```toml
     "psycopg[binary]>=3.2.10",
-    "mlflow>=2.22.0,<3",
+    "mlflow>=3.13.0,<4",
 ]
 ```
 
@@ -228,7 +228,7 @@ dev = [
     "pytest-mock>=3.15.1",
     "ydata-profiling[notebook]>=4.18.1",
     "psycopg[binary]>=3.2.10",
-    "mlflow>=2.22.0,<3",
+    "mlflow>=3.13.0,<4",
 ]
 ```
 

@@ -4,7 +4,7 @@
     select distinct
         table_schema as {{ adapter.quote('table_schema') }},
         table_name   as {{ adapter.quote('table_name') }},
-        {{ dbt_utils.get_table_types_sql() }}
+        table_type
     from {{ database }}.information_schema.tables
     where lower(table_schema) like lower('{{ schema_pattern }}')
       and lower(table_name)   like lower('{{ table_pattern }}')

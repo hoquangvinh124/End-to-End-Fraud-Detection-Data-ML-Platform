@@ -95,6 +95,7 @@ services:
     volumes:
       - ./trino/etc:/usr/lib/trino/etc:ro
       - ./trino/catalog:/etc/trino/catalog:ro
+      - trino_spill:/mnt/trino-spill
     depends_on:
       hive-metastore:
         condition: service_started
@@ -124,3 +125,4 @@ volumes:
   minio_data:
   metastore_db_data:
   clickhouse_data:
+  trino_spill:

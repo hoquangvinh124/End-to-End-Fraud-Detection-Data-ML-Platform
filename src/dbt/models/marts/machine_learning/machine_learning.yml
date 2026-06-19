@@ -12,7 +12,7 @@ models:
       - name: TX_AMOUNT
         tests:
           - not_null
-          - dbt_utils.accepted_range:
+          - accepted_range:
               min_value: 0
               inclusive: false
       - name: IS_WEEKEND
@@ -48,5 +48,6 @@ models:
           - not_null
           - accepted_values:
               values: [0, 1]
+              quote: false
       - name: feature_date
         tests: [not_null]

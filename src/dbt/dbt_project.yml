@@ -2,7 +2,7 @@ name: ABC_Bank
 version: '1.0.0'
 config-version: 2
 
-profile: ABC_Bank
+profile: fraud_detection
 
 model-paths: ["models"]
 test-paths: ["tests"]

@@ -8,16 +8,19 @@
     }
 ) }}
 
-{% set feature_date = var('feature_date', none) %}
-{% if feature_date %}
-    {% set fd_expr = "DATE '" ~ feature_date ~ "'" %}
-{% else %}
-    {% set fd_expr = "current_date - interval '1' day" %}
-{% endif %}
+{# ------------------------------------------------------------------
+   Backfill: --var start_date 2024-01-01 --var end_date 2024-01-31
+   Single day: --var start_date 2024-01-15
+   Default (no vars): today
+   ------------------------------------------------------------------ #}
+{% set today      = modules.datetime.date.today().isoformat() %}
+{% set start_date = var('start_date', today) %}
+{% set end_date   = var('end_date',   start_date) %}
 
 
 WITH params AS (
-    SELECT CAST({{ fd_expr }} AS DATE) AS fd
+    SELECT CAST(d AS DATE) AS fd
+    FROM UNNEST(SEQUENCE(DATE '{{ start_date }}', DATE '{{ end_date }}', INTERVAL '1' DAY)) AS t(d)
 ),
 
 
@@ -32,6 +35,8 @@ fraud_per_tx AS (
 
 SELECT
     t.transaction_id,
+    t.customer_id,
+    t.terminal_id,
     CAST(t.event_timestamp AS timestamp(0))                                          AS event_timestamp,
 
 

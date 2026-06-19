@@ -4,7 +4,7 @@ models:
   - name: int_terminals_windowed
     description: "1d/7d/30d risk + tx-count aggregates per terminal_id (7-day delay offset)"
     tests:
-      - dbt_utils.unique_combination_of_columns:
+      - unique_combination_of_columns:
           combination_of_columns:
             - terminal_id
             - feature_date

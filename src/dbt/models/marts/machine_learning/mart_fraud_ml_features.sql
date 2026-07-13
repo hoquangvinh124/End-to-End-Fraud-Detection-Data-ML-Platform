@@ -81,4 +81,11 @@ LEFT JOIN {{ ref('int_terminals_windowed') }} tm
     AND tm.feature_date = p.fd
 LEFT JOIN fraud_per_tx f
     ON t.transaction_id = f.transaction_id
+{% if is_incremental() %}
+LEFT JOIN {{ this }} existing
+    ON t.transaction_id = existing.transaction_id
+{% endif %}
 WHERE t.event_date = p.fd
+{% if is_incremental() %}
+  AND existing.transaction_id IS NULL
+{% endif %}

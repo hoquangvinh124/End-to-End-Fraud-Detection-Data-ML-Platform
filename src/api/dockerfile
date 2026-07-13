@@ -31,10 +31,12 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
 COPY --chown=user:user src/api/ ./api/
+COPY --chown=user:user src/feature_store/ ./feature_store/
+COPY --chown=user:user src/training/ ./training/
 COPY --chown=user:user models/ ./models/
 
 USER user
 
 EXPOSE 8000
 
-CMD ["opentelemetry-instrument", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "cd /app/feature_store && PYTHONPATH=/app /app/.venv/bin/feast apply && cd /app && opentelemetry-instrument uvicorn api.main:app --host 0.0.0.0 --port 8000"]

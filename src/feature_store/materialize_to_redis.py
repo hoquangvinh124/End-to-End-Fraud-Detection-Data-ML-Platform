@@ -1,8 +1,9 @@
 """Materialize online feature views (customer, terminal) to Redis from ClickHouse.
 
-Reads the latest feature_date partition from ClickHouse intermediate tables using
-clickhouse-connect and pushes directly to Redis via feast.write_to_online_store().
-This bypasses the offline store abstraction (no official Feast ClickHouse plugin).
+Reads the daily gold ML feature mart using clickhouse-connect and pushes the
+latest entity feature rows directly to Redis via feast.write_to_online_store().
+This bypasses the offline store abstraction because the project does not depend
+on an official Feast ClickHouse offline store plugin.
 
 Usage:
     uv run python src/feature_store/materialize_to_redis.py
@@ -23,13 +24,20 @@ from feast import FeatureStore
 def _get_client() -> clickhouse_connect.driver.Client:
     host = os.environ.get("CLICKHOUSE_HOST", "localhost")
     port_str = os.environ.get("CLICKHOUSE_PORT", "8123")
+    username = os.environ.get("CLICKHOUSE_USER", "abcbank")
+    password = os.environ.get("CLICKHOUSE_PASSWORD", "abcbank")
     try:
         port = int(port_str)
     except ValueError:
         raise ValueError(
             f"CLICKHOUSE_PORT must be an integer, got: {port_str!r}"
         ) from None
-    return clickhouse_connect.get_client(host=host, port=port)
+    return clickhouse_connect.get_client(
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+    )
 
 
 def _resolve_feature_date(feature_date_str: str | None) -> str:
@@ -52,16 +60,17 @@ def materialize(store: FeatureStore, feature_date: str) -> None:
         customer_df: pd.DataFrame = client.query_df(
             """
             SELECT
-                customer_id,
-                feature_date                              AS event_timestamp,
-                CUSTOMER_AVG_AMOUNT_WINDOW_1D,
-                CUSTOMER_AVG_AMOUNT_WINDOW_7D,
-                CUSTOMER_AVG_AMOUNT_WINDOW_30D,
-                CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D,
-                CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D,
-                CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D
-            FROM intermediate.int_customer_window_features
+                toInt64(customer_id) AS customer_id,
+                max(mart.event_timestamp) AS event_timestamp,
+                argMax(customer_avg_amount_window_1d, mart.event_timestamp) AS CUSTOMER_AVG_AMOUNT_WINDOW_1D,
+                argMax(customer_avg_amount_window_7d, mart.event_timestamp) AS CUSTOMER_AVG_AMOUNT_WINDOW_7D,
+                argMax(customer_avg_amount_window_30d, mart.event_timestamp) AS CUSTOMER_AVG_AMOUNT_WINDOW_30D,
+                toInt64(argMax(customer_number_of_transactions_window_1d, mart.event_timestamp)) AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_1D,
+                toInt64(argMax(customer_number_of_transactions_window_7d, mart.event_timestamp)) AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_7D,
+                toInt64(argMax(customer_number_of_transactions_window_30d, mart.event_timestamp)) AS CUSTOMER_NUMBER_OF_TRANSACTIONS_WINDOW_30D
+            FROM gold.mart_fraud_ml_features AS mart
             WHERE feature_date = {fd:Date}
+            GROUP BY customer_id
             """,
             parameters={"fd": feature_date},
         )
@@ -74,6 +83,7 @@ def materialize(store: FeatureStore, feature_date: str) -> None:
             customer_df["event_timestamp"] = pd.to_datetime(
                 customer_df["event_timestamp"], utc=True
             )
+            customer_df["feature_date"] = customer_df["event_timestamp"]
             store.write_to_online_store(
                 feature_view_name="customer_features_view",
                 df=customer_df,
@@ -84,16 +94,17 @@ def materialize(store: FeatureStore, feature_date: str) -> None:
         terminal_df: pd.DataFrame = client.query_df(
             """
             SELECT
-                terminal_id,
-                feature_date                    AS event_timestamp,
-                TERMINAL_RISK_1DAY_WINDOW,
-                TERMINAL_RISK_7DAY_WINDOW,
-                TERMINAL_RISK_30DAY_WINDOW,
-                TERMINAL_NB_TX_1DAY_WINDOW,
-                TERMINAL_NB_TX_7DAY_WINDOW,
-                TERMINAL_NB_TX_30DAY_WINDOW
-            FROM intermediate.int_terminal_window_features
+                toInt64(terminal_id) AS terminal_id,
+                max(mart.event_timestamp) AS event_timestamp,
+                argMax(terminal_risk_1day_window, mart.event_timestamp) AS TERMINAL_RISK_1DAY_WINDOW,
+                argMax(terminal_risk_7day_window, mart.event_timestamp) AS TERMINAL_RISK_7DAY_WINDOW,
+                argMax(terminal_risk_30day_window, mart.event_timestamp) AS TERMINAL_RISK_30DAY_WINDOW,
+                toInt64(argMax(terminal_nb_tx_1day_window, mart.event_timestamp)) AS TERMINAL_NB_TX_1DAY_WINDOW,
+                toInt64(argMax(terminal_nb_tx_7day_window, mart.event_timestamp)) AS TERMINAL_NB_TX_7DAY_WINDOW,
+                toInt64(argMax(terminal_nb_tx_30day_window, mart.event_timestamp)) AS TERMINAL_NB_TX_30DAY_WINDOW
+            FROM gold.mart_fraud_ml_features AS mart
             WHERE feature_date = {fd:Date}
+            GROUP BY terminal_id
             """,
             parameters={"fd": feature_date},
         )
@@ -106,6 +117,7 @@ def materialize(store: FeatureStore, feature_date: str) -> None:
             terminal_df["event_timestamp"] = pd.to_datetime(
                 terminal_df["event_timestamp"], utc=True
             )
+            terminal_df["feature_date"] = terminal_df["event_timestamp"]
             store.write_to_online_store(
                 feature_view_name="terminal_features_view",
                 df=terminal_df,

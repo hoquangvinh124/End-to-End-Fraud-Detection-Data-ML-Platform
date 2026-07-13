@@ -7,12 +7,17 @@ on:
       - vinh-branch
       - main
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,10 +34,10 @@ jobs:
 
       - name: Run Ruff
         run: uv run ruff check .
-        continue-on-error: true
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,7 +48,7 @@ jobs:
           python-version: "3.11"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
-          
+
       - name: Sync dependencies
         run: uv sync --frozen --group dev
 

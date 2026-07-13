@@ -7,6 +7,11 @@ services:
     ports:
       - "8000:8000"
     environment:
+      MODEL_SOURCE: mlflow
+      MLFLOW_TRACKING_URI: http://mlflow-server:5000
+      MLFLOW_MODEL_NAME: fraud-detection
+      MLFLOW_MODEL_ALIAS: champion
+      FEAST_REPO_PATH: /app/feature_store
       OTEL_SERVICE_NAME: fraud-detection-api
       OTEL_TRACES_EXPORTER: otlp
       OTEL_METRICS_EXPORTER: otlp
@@ -22,6 +27,10 @@ services:
       retries: 5
       start_period: 25s
     depends_on:
+      mlflow-server:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       otel-collector:
         condition: service_started
 

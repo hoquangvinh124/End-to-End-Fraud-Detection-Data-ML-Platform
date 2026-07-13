@@ -77,6 +77,25 @@ class TransactionRequest(BaseModel):
         }
 
 
+class OnlineTransactionRequest(BaseModel):
+    """Request model for online feature-store backed prediction."""
+
+    customer_id: int = Field(..., description="Customer entity ID")
+    terminal_id: int = Field(..., description="Terminal entity ID")
+    TX_AMOUNT: float = Field(..., description="Transaction amount", gt=0)
+    TX_DATETIME: datetime = Field(..., description="Transaction timestamp")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "customer_id": 1,
+                "terminal_id": 42,
+                "TX_AMOUNT": 150.50,
+                "TX_DATETIME": "2026-06-23T12:30:00",
+            }
+        }
+
+
 class PredictionResponse(BaseModel):
     """Response model cho fraud detection prediction"""
 

@@ -1055,7 +1055,7 @@ _SPARK_IMAGE = os.environ.get("SPARK_BATCH_IMAGE", "mlops-batch:latest")
 _DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "mlops_default")
 _DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1497906449865773117/8IsOYy6ySXOmI5RDvwyPdbES00hhYZ1VssX4jZnxNgTYzDg2u9_ihaI5qRD-QbO1crKL",
+    "",
 )
 _MATERIALIZE_SCRIPT = os.environ.get(
     "MATERIALIZE_SCRIPT_PATH",

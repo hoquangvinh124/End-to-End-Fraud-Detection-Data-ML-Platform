@@ -24,7 +24,6 @@ Run manually (local spark-submit):
 """
 from __future__ import annotations
 
-import argparse
 import os
 from functools import partial
 from textwrap import dedent

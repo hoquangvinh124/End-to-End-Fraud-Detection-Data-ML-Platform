@@ -55,6 +55,48 @@ def resolve_date_range(
     return start_date, resolved_end
 
 
+def fetch_latest_transaction_date(connection: psycopg.Connection) -> date | None:
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT MAX(event_timestamp) FROM banking.transactions")
+        latest_timestamp = cursor.fetchone()[0]
+
+    if latest_timestamp is None:
+        return None
+    if isinstance(latest_timestamp, date) and not isinstance(latest_timestamp, pd.Timestamp):
+        return latest_timestamp.date() if hasattr(latest_timestamp, "date") else latest_timestamp
+    return pd.Timestamp(latest_timestamp).date()
+
+
+def resolve_generation_range(
+    latest_date: date | None,
+    start_date: date | None,
+    end_date: date | None,
+    days: int | None,
+) -> tuple[date, date] | None:
+    if start_date is not None:
+        if latest_date is not None and start_date <= latest_date:
+            raise ValueError(
+                f"--start-date {start_date} overlaps existing OLTP data through "
+                f"{latest_date}"
+            )
+        return resolve_date_range(start_date, end_date, days)
+
+    if latest_date is None:
+        return resolve_date_range(None, end_date, days)
+
+    resume_date = latest_date + timedelta(days=1)
+    resolved_end = end_date or date.today()
+    if days is not None:
+        if days <= 0:
+            raise ValueError("--days must be a positive integer")
+        if end_date is None:
+            resolved_end = resume_date + timedelta(days=days - 1)
+
+    if resume_date > resolved_end:
+        return None
+    return resume_date, resolved_end
+
+
 def iter_dates(start_date: date, end_date: date) -> list[date]:
     return [
         start_date + timedelta(days=offset)
@@ -232,7 +274,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-date", type=parse_date, default=None, help="First generated date, YYYY-MM-DD")
     parser.add_argument("--end-date", type=parse_date, default=None, help="Last generated date, YYYY-MM-DD")
     parser.add_argument("--days", type=int, default=None, help="Generated day count when start/end are omitted")
-    parser.add_argument("--daily-scale", type=float, default=1.0, help="Fraction of each seed day to load")
+    parser.add_argument("--daily-scale", type=float, default=0.10, help="Fraction of each seed day to load")
     parser.add_argument("--max-days", type=int, default=None, help="Optional cap on generated days for quick smoke tests")
     parser.add_argument("--reset", action="store_true", help="Truncate OLTP tables before loading")
     return parser.parse_args()
@@ -240,26 +282,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    start_date, end_date = resolve_date_range(args.start_date, args.end_date, args.days)
-    target_dates = iter_dates(start_date, end_date)
-    if args.max_days is not None:
-        if args.max_days <= 0:
-            raise ValueError("--max-days must be a positive integer")
-        target_dates = target_dates[: args.max_days]
-
-    seed_files = list_seed_files(args.data_dir, args.pattern, limit_files=None)
-    print(f"Found {len(seed_files)} seed files")
-    print(f"Generating {len(target_dates)} day(s): {target_dates[0]} -> {target_dates[-1]}")
-    print(f"Daily scale: {args.daily_scale}")
-
-    customer_ids, terminal_ids = collect_unique_ids(seed_files)
-    customers = build_customers(customer_ids)
-    accounts = build_accounts(customers)
-    cards = build_cards(customers, accounts)
-    terminals = build_terminals(terminal_ids)
-    account_lookup = accounts.set_index("customer_id")["account_id"].to_dict()
-    card_lookup = cards.set_index("customer_id")["card_id"].to_dict()
-
     connection = psycopg.connect(
         host=args.db_host,
         port=args.db_port,
@@ -273,6 +295,40 @@ def main() -> None:
             print("Truncating existing OLTP tables...")
             truncate_tables(connection)
             connection.commit()
+
+        latest_date = fetch_latest_transaction_date(connection)
+        generation_range = resolve_generation_range(
+            latest_date,
+            args.start_date,
+            args.end_date,
+            args.days,
+        )
+        if generation_range is None:
+            print(
+                "OLTP data is already current through "
+                f"{latest_date}; no rows were inserted."
+            )
+            return
+
+        start_date, end_date = generation_range
+        target_dates = iter_dates(start_date, end_date)
+        if args.max_days is not None:
+            if args.max_days <= 0:
+                raise ValueError("--max-days must be a positive integer")
+            target_dates = target_dates[: args.max_days]
+
+        seed_files = list_seed_files(args.data_dir, args.pattern, limit_files=None)
+        print(f"Found {len(seed_files)} seed files")
+        print(f"Generating {len(target_dates)} day(s): {target_dates[0]} -> {target_dates[-1]}")
+        print(f"Daily scale: {args.daily_scale}")
+
+        customer_ids, terminal_ids = collect_unique_ids(seed_files)
+        customers = build_customers(customer_ids)
+        accounts = build_accounts(customers)
+        cards = build_cards(customers, accounts)
+        terminals = build_terminals(terminal_ids)
+        account_lookup = accounts.set_index("customer_id")["account_id"].to_dict()
+        card_lookup = cards.set_index("customer_id")["card_id"].to_dict()
 
         should_load_dimensions = args.reset or table_count(connection, "customers") == 0
         if should_load_dimensions:

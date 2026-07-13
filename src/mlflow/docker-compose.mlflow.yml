@@ -42,6 +42,7 @@ services:
     ports:
       - "5000:5000"
     environment:
+      MLFLOW_SERVER_ALLOWED_HOSTS: "*"
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-minio}
       AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-minio12345}

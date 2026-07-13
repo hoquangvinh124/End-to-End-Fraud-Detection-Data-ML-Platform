@@ -1,15 +1,15 @@
-"""feature_pipeline_daily — daily batch pipeline: Bronze → dbt (staging/intermediate/marts) → Redis.
+"""feature_pipeline_daily — daily batch pipeline: Bronze → dbt → Redis → MLflow.
 
 Dependency graph:
 
   bronze.ingest_transactions ──┐
-                                ├──► dbt_staging ──► dbt_intermediate ──► dbt_marts ──► materialize_online_features
+                                ├──► dbt_staging ──► dbt_intermediate ──► dbt_marts ──► materialize_online_features ──► train_register_model
   bronze.ingest_fraud_cases  ──┘
 
 dbt_staging writes normalized Silver-equivalent tables to MinIO/Delta via Trino.
-dbt_intermediate writes customer + terminal window features to ClickHouse.
 dbt_marts writes the flat ML feature table to ClickHouse.
-materialize_online_features reads ClickHouse intermediate tables → pushes to Redis.
+materialize_online_features reads the ClickHouse Gold feature mart → pushes to Redis.
+train_register_model trains from ClickHouse feature marts and registers an ONNX artifact in MLflow.
 
 On any task failure a Discord alert is sent to the team webhook.
 """
@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import os
-import pathlib
 import urllib.request
 from datetime import timedelta
 from pathlib import Path
@@ -25,7 +24,6 @@ from typing import Any
 
 import pendulum
 from airflow.providers.docker.operators.docker import DockerOperator
-from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import DAG, TaskGroup
 from cosmos import (
     DbtTaskGroup,
@@ -41,12 +39,10 @@ _SPARK_IMAGE = os.environ.get("SPARK_BATCH_IMAGE", "mlops-batch:latest")
 _DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "mlops_default")
 _DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1497906449865773117/8IsOYy6ySXOmI5RDvwyPdbES00hhYZ1VssX4jZnxNgTYzDg2u9_ihaI5qRD-QbO1crKL",
+    "",
 )
-_MATERIALIZE_SCRIPT = os.environ.get(
-    "MATERIALIZE_SCRIPT_PATH",
-    str(pathlib.Path(__file__).resolve().parents[2] / "feature_store" / "materialize_to_redis.py"),
-)
+_ML_RUNTIME_IMAGE = os.environ.get("ML_RUNTIME_IMAGE", "mlops-fraud-detection-api:latest")
+_MLFLOW_TRACKING_URI = os.environ.get("MLFLOW_TRACKING_URI", "http://mlflow-server:5000")
 _DBT_PROJECT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
 
 
@@ -57,6 +53,9 @@ _DBT_PROJECT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
 
 def _notify_discord_failure(context: dict[str, Any]) -> None:
     """Post a concise failure alert to Discord when any task fails."""
+    if not _DISCORD_WEBHOOK:
+        return
+
     ti = context["task_instance"]
     msg = (
         f"🔴 **Airflow task FAILED**\n"
@@ -209,23 +208,64 @@ with DAG(
     )
 
     # ── Feast → Redis materialization ─────────────────────────────────────
-    materialize_online_features = BashOperator(
+    materialize_online_features = DockerOperator(
         task_id="materialize_online_features",
-        bash_command=f"uv run python {_MATERIALIZE_SCRIPT} --feature-date {{{{ ds }}}}",
+        image=_ML_RUNTIME_IMAGE,
+        command=(
+            "bash -c 'cd /app/feature_store && PYTHONPATH=/app /app/.venv/bin/feast apply "
+            "&& cd /app && python feature_store/materialize_to_redis.py --feature-date {{ ds }}'"
+        ),
+        network_mode=_DOCKER_NETWORK,
+        auto_remove="success",
+        mount_tmp_dir=False,
+        environment={
+            "CLICKHOUSE_HOST": "clickhouse",
+            "CLICKHOUSE_PORT": "8123",
+            "CLICKHOUSE_USER": "abcbank",
+            "CLICKHOUSE_PASSWORD": "abcbank",
+            "PYTHONPATH": "/app",
+        },
         retries=2,
         retry_delay=timedelta(minutes=5),
         retry_exponential_backoff=True,
         execution_timeout=timedelta(minutes=30),
         on_failure_callback=_notify_discord_failure,
         doc_md=(
-            "Reads customer + terminal features from ClickHouse intermediate tables "
+            "Reads customer + terminal features from the ClickHouse Gold feature mart "
             "for `{{ ds }}` and pushes to Redis via `feast write_to_online_store`."
         ),
     )
 
+    train_register_model = DockerOperator(
+        task_id="train_register_model",
+        image=_ML_RUNTIME_IMAGE,
+        command=(
+            "python -m training.train_from_feature_store "
+            "--clickhouse-host clickhouse "
+            "--clickhouse-port 8123 "
+            "--tracking-uri "
+            f"{_MLFLOW_TRACKING_URI} "
+            "--start-date {{ macros.ds_add(ds, -90) }} "
+            "--end-date {{ ds }}"
+        ),
+        network_mode=_DOCKER_NETWORK,
+        auto_remove="success",
+        mount_tmp_dir=False,
+        retries=1,
+        retry_delay=timedelta(minutes=5),
+        execution_timeout=timedelta(hours=1),
+        on_failure_callback=_notify_discord_failure,
+        doc_md=(
+            "Trains an ONNX-compatible fraud model from the ClickHouse Gold mart, "
+            "logs metrics/artifacts to MLflow, and updates the `champion` alias."
+        ),
+    )
+
     # ── Dependencies ──────────────────────────────────────────────────────
-    [ingest_transactions, ingest_fraud_cases] >> [normalize_transactions, normalize_fraud_cases]
+    for ingest_task in [ingest_transactions, ingest_fraud_cases]:
+        for normalize_task in [normalize_transactions, normalize_fraud_cases]:
+            ingest_task >> normalize_task
     [normalize_transactions, normalize_fraud_cases] >> dbt_staging
     dbt_staging >> dbt_intermediate
     dbt_intermediate >> dbt_marts
-    dbt_marts >> materialize_online_features
+    dbt_marts >> materialize_online_features >> train_register_model

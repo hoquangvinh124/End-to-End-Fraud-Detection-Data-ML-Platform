@@ -9,11 +9,15 @@
 #   Observability only: docker compose -f src/monitoring/docker-compose.observability.yml up -d
 #   Batch processing:   docker compose -f postgres/docker-compose.oltp.yml -f src/cdc/docker-compose.cdc.yml -f src/batch_processing/docker-compose.batch_processing.yml up -d
 #   MLflow only:        docker compose -f src/lakehouse/docker-compose.lakehouse.yml -f src/mlflow/docker-compose.mlflow.yml up -d
+#   Airflow only:       docker compose -f src/orchestration/docker-compose.airflow.yml up -d
 
 include:
   - postgres/docker-compose.oltp.yml
   - src/cdc/docker-compose.cdc.yml
   - src/lakehouse/docker-compose.lakehouse.yml
+  - src/feature_store/docker-compose.redis.yml
   - src/monitoring/docker-compose.observability.yml
   - src/cdc_ingestion/docker-compose.cdc_ingestion.yml
   - src/mlflow/docker-compose.mlflow.yml
+  - src/batch_processing/docker-compose.batch_processing.yml
+  - src/orchestration/docker-compose.airflow.yml

@@ -3,12 +3,17 @@ name = "mlops"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.13"
 dependencies = [
     "fastapi>=0.128.0",
     "imbalanced-learn>=0.14.1",
     "joblib>=1.5.3",
+    "feast[redis]>=0.40",
+    "mlflow>=3.13.0,<4",
+    "ml-dtypes>=0.5.0",
     "numpy>=1.22.0,<2", # feast>=0.40 requires numpy<2; revisit when feast supports numpy 2.x
+    "onnx>=1.19.0",
+    "onnxruntime>=1.23.0",
     "opentelemetry-distro>=0.62b0",
     "opentelemetry-exporter-otlp>=1.41.0",
     "opentelemetry-instrumentation-asgi==0.62b0",
@@ -35,6 +40,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "python-multipart>=0.0.21",
     "scikit-learn>=1.8.0",
+    "skl2onnx>=1.19.0",
     "uvicorn[standard]>=0.34.0,<1",
     "xgboost>=3.1.3",
     "clickhouse-connect==0.15.1",
@@ -63,6 +69,7 @@ testpaths = ["src/tests"]
 
 [tool.ruff]
 target-version = "py311"
+extend-exclude = ["notebooks/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I"]

@@ -2,7 +2,7 @@
 #
 # Usage:
 #   docker compose -f docker-compose.airflow.yml up -d
-#   open http://localhost:8090  (admin / admin)
+#   open http://localhost:8089  (admin / admin)
 #
 # Airflow 3 service architecture:
 #   api-server     — REST API + web UI  (replaces 2.x webserver, port 8090)
@@ -25,7 +25,7 @@
 # directly on the host Docker daemon (same daemon as Kafka/MinIO).
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:3.0.2
+  image: apache/airflow:3.1.0
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
@@ -42,6 +42,9 @@ x-airflow-common: &airflow-common
     TRINO_PORT: "8080"
     CLICKHOUSE_HOST: "clickhouse"
     CLICKHOUSE_PORT: "8123"
+    MLFLOW_TRACKING_URI: "http://mlflow-server:5000"
+    DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-}"
+    PYTHONPATH: "/opt/airflow"
     # Install providers at startup (avoids custom image build)
     # standard provider: BashOperator and other core operators moved here in Airflow 3
     _PIP_ADDITIONAL_REQUIREMENTS: >-
@@ -52,7 +55,9 @@ x-airflow-common: &airflow-common
       dbt-trino==1.10.1
   volumes:
     - ./dags:/opt/airflow/dags:ro
+    - ../api:/opt/airflow/api:ro
     - ../feature_store:/opt/airflow/feature_store:ro
+    - ../training:/opt/airflow/training:ro
     - ../dbt:/opt/airflow/dbt:ro
     - airflow_logs:/opt/airflow/logs
     # DockerOperator needs access to host Docker daemon
@@ -84,18 +89,8 @@ services:
     entrypoint: /bin/bash
     command: >
       -c "
-        pip install
-          'apache-airflow-providers-docker>=3.9.0'
-          'apache-airflow-providers-standard>=1.0.0'
-          'astronomer-cosmos==1.14.1'
-          'dbt-core~=1.10.0'
-          'dbt-trino==1.10.1'
-          --quiet &&
-        airflow db migrate &&
-        airflow users create
-          --username admin --password admin
-          --firstname Admin --lastname User
-          --role Admin --email admin@local.dev
+        pip install 'apache-airflow-providers-docker>=3.9.0' 'apache-airflow-providers-standard>=1.0.0' 'astronomer-cosmos==1.14.1' 'dbt-core~=1.10.0' 'dbt-trino==1.10.1' --quiet &&
+        airflow db migrate
       "
     restart: "no"
 
@@ -105,9 +100,9 @@ services:
     container_name: airflow-api-server
     command: api-server
     ports:
-      - "8090:8080"
+      - "8089:8080"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/monitor/health"]
       interval: 30s
       timeout: 10s
       retries: 5

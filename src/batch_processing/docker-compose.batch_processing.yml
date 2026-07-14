@@ -13,8 +13,12 @@
 services:
   silver-transactions:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: src/batch_processing/Dockerfile
+    environment: &batch-otel-environment
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_METRIC_EXPORT_INTERVAL: "15000"
+      DEPLOYMENT_ENVIRONMENT: local
     entrypoint: ["/opt/spark/bin/spark-submit"]
     command: ["/opt/bronze_to_silver/cdc_transactions_normalize_merge_silver.py"]
     restart: "no"
@@ -23,8 +27,9 @@ services:
 
   silver-fraud-cases:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: src/batch_processing/Dockerfile
+    environment: *batch-otel-environment
     entrypoint: ["/opt/spark/bin/spark-submit"]
     command: ["/opt/bronze_to_silver/cdc_fraud_cases_normalize_merge_silver.py"]
     restart: "no"

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 
 from feature_store.materialize_to_redis import _resolve_feature_date, materialize
+from tests.pipeline_monitoring.test_spark_listener import RecordingSink
 
 
 def _make_client(customer_rows: int = 2, terminal_rows: int = 3) -> MagicMock:
@@ -47,6 +48,31 @@ def test_write_to_online_store_called_for_both_views() -> None:
     calls = {c.kwargs["feature_view_name"] for c in store.write_to_online_store.call_args_list}
     assert calls == {"customer_features_view", "terminal_features_view"}
     client.close.assert_called_once()
+
+
+def test_materialize_emits_rows_feature_watermark_and_success() -> None:
+    store = MagicMock()
+    client = _make_client(customer_rows=2, terminal_rows=3)
+    sink = RecordingSink()
+    with patch("feature_store.materialize_to_redis._get_client", return_value=client):
+        materialize(store, "2026-05-11", sink=sink, clock=lambda: 1000.0)
+
+    assert any(
+        name == "mlops.pipeline.records.processed" and value == 2.0
+        for name, value, _ in sink.counters
+    )
+    assert any(
+        name == "mlops.pipeline.records.processed" and value == 3.0
+        for name, value, _ in sink.counters
+    )
+    assert any(
+        name == "mlops.pipeline.last_success.time" and value == 1000.0
+        for name, value, _ in sink.gauges
+    )
+    assert any(
+        name == "mlops.pipeline.data.watermark.time" and value == 1778457600.0
+        for name, value, _ in sink.gauges
+    )
 
 
 def test_empty_customer_df_skips_write(capsys) -> None:

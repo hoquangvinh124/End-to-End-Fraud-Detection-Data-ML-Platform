@@ -63,10 +63,13 @@ class TestMain:
             patch.object(mod, "build_spark_session", return_value=spark),
             patch.object(mod, "fetch_avro_schema", return_value='{"type":"record"}'),
             patch.object(mod, "build_bronze_rows", return_value=bronze_df),
+            patch.object(mod, "PipelineStreamingQueryListener") as listener_cls,
         ):
             mod.main()
 
         writer.format.assert_called_once_with("parquet")
+        listener_cls.assert_called_once_with("fraud_cases")
+        spark.streams.addListener.assert_called_once_with(listener_cls.return_value)
         query.awaitTermination.assert_called_once_with()
 
     def test_no_hive_registration_in_main(self):

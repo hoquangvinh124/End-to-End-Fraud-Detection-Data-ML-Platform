@@ -16,4 +16,5 @@ include:
   - src/lakehouse/docker-compose.lakehouse.yml
   - src/monitoring/docker-compose.observability.yml
   - src/cdc_ingestion/docker-compose.cdc_ingestion.yml
+  - src/orchestration/docker-compose.airflow.yml
   - src/mlflow/docker-compose.mlflow.yml

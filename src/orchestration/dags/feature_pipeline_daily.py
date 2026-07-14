@@ -1,31 +1,27 @@
-"""feature_pipeline_daily — daily batch pipeline: Bronze → dbt (staging/intermediate/marts) → Redis.
+"""feature_pipeline_daily — daily batch pipeline: Silver → dbt → Redis.
 
 Dependency graph:
 
-  bronze.ingest_transactions ──┐
-                                ├──► dbt_staging ──► dbt_intermediate ──► dbt_marts ──► materialize_online_features
-  bronze.ingest_fraud_cases  ──┘
+  cdc_freshness_gate ──► Spark Bronze→Silver ──► dbt staging/intermediate/marts ──► Redis
 
-dbt_staging writes normalized Silver-equivalent tables to MinIO/Delta via Trino.
+dbt_staging reads the normalized Silver Delta tables through Trino.
 dbt_intermediate writes customer + terminal window features to ClickHouse.
 dbt_marts writes the flat ML feature table to ClickHouse.
 materialize_online_features reads ClickHouse intermediate tables → pushes to Redis.
 
-On any task failure a Discord alert is sent to the team webhook.
+CDC ingestion is a long-running service and is deliberately not scheduled here.
 """
 from __future__ import annotations
 
-import json
 import os
 import pathlib
-import urllib.request
 from datetime import timedelta
 from pathlib import Path
-from typing import Any
 
 import pendulum
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.providers.standard.operators.bash import BashOperator
+from airflow.providers.standard.sensors.python import PythonSensor
 from airflow.sdk import DAG, TaskGroup
 from cosmos import (
     DbtTaskGroup,
@@ -36,47 +32,19 @@ from cosmos import (
     RenderConfig,
 )
 from cosmos.profiles.trino.base import TrinoBaseProfileMapping
+from pipeline_readiness import cdc_freshness_ready
 
 _SPARK_IMAGE = os.environ.get("SPARK_BATCH_IMAGE", "mlops-batch:latest")
 _DOCKER_NETWORK = os.environ.get("DOCKER_NETWORK", "mlops_default")
-_DISCORD_WEBHOOK = os.environ.get(
-    "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1497906449865773117/8IsOYy6ySXOmI5RDvwyPdbES00hhYZ1VssX4jZnxNgTYzDg2u9_ihaI5qRD-QbO1crKL",
+_PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://prometheus:9090")
+_OTEL_ENDPOINT = os.environ.get(
+    "OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4318"
 )
 _MATERIALIZE_SCRIPT = os.environ.get(
     "MATERIALIZE_SCRIPT_PATH",
     str(pathlib.Path(__file__).resolve().parents[2] / "feature_store" / "materialize_to_redis.py"),
 )
 _DBT_PROJECT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
-
-
-# ---------------------------------------------------------------------------
-# Failure callback
-# ---------------------------------------------------------------------------
-
-
-def _notify_discord_failure(context: dict[str, Any]) -> None:
-    """Post a concise failure alert to Discord when any task fails."""
-    ti = context["task_instance"]
-    msg = (
-        f"🔴 **Airflow task FAILED**\n"
-        f"DAG: `{ti.dag_id}`  Task: `{ti.task_id}`\n"
-        f"Run: `{ti.run_id}`\n"
-        f"Exception: `{context.get('exception', 'n/a')}`\n"
-        f"Logs: {ti.log_url}"
-    )
-    data = json.dumps({"content": msg[:1900]}).encode("utf-8")
-    req = urllib.request.Request(
-        _DISCORD_WEBHOOK,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            resp.read()
-    except Exception:
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -99,13 +67,17 @@ def _spark_task(
         image=_SPARK_IMAGE,
         command=cmd,
         network_mode=_DOCKER_NETWORK,
+        environment={
+            "OTEL_EXPORTER_OTLP_ENDPOINT": _OTEL_ENDPOINT,
+            "OTEL_METRIC_EXPORT_INTERVAL": "15000",
+            "DEPLOYMENT_ENVIRONMENT": "local",
+        },
         auto_remove="success",
         mount_tmp_dir=False,
         retries=2,
         retry_delay=timedelta(minutes=5),
         retry_exponential_backoff=True,
         execution_timeout=timedelta(hours=2),
-        on_failure_callback=_notify_discord_failure,
     )
     if doc_md:
         op.doc_md = doc_md
@@ -146,7 +118,6 @@ def _dbt_task_group(
         render_config=RenderConfig(select=[select]),
         operator_args={
             "vars": {"feature_date": "{{ ds }}"},
-            "on_failure_callback": _notify_discord_failure,
         },
     )
 
@@ -164,19 +135,15 @@ with DAG(
     tags=["batch", "features", "dbt", "clickhouse"],
     doc_md=__doc__,
 ):
-    # ── Bronze CDC ingestion (Spark) ──────────────────────────────────────
-    with TaskGroup("bronze"):
-        ingest_transactions = _spark_task(
-            task_id="ingest_transactions",
-            script="/opt/cdc_ingestion/cdc_transactions_to_bronze.py",
-            doc_md="Reads CDC rows from `cdc.transactions` Kafka topic → appends to Bronze Delta `s3a://bronze/cdc/transactions`.",
-        )
-
-        ingest_fraud_cases = _spark_task(
-            task_id="ingest_fraud_cases",
-            script="/opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py",
-            doc_md="Reads CDC rows from `cdc.fraud_cases` Kafka topic → appends to `s3a://bronze/cdc/fraud_cases`.",
-        )
+    cdc_freshness_gate = PythonSensor(
+        task_id="cdc_freshness_gate",
+        python_callable=cdc_freshness_ready,
+        op_kwargs={"prometheus_url": _PROMETHEUS_URL},
+        poke_interval=30,
+        timeout=30 * 60,
+        mode="reschedule",
+        doc_md="Wait for both CDC services to be healthy and at most five minutes behind Kafka.",
+    )
 
     # ── Bronze → Silver normalisation (Spark) ────────────────────────────
     with TaskGroup("silver"):
@@ -216,7 +183,6 @@ with DAG(
         retry_delay=timedelta(minutes=5),
         retry_exponential_backoff=True,
         execution_timeout=timedelta(minutes=30),
-        on_failure_callback=_notify_discord_failure,
         doc_md=(
             "Reads customer + terminal features from ClickHouse intermediate tables "
             "for `{{ ds }}` and pushes to Redis via `feast write_to_online_store`."
@@ -224,7 +190,7 @@ with DAG(
     )
 
     # ── Dependencies ──────────────────────────────────────────────────────
-    [ingest_transactions, ingest_fraud_cases] >> [normalize_transactions, normalize_fraud_cases]
+    cdc_freshness_gate >> [normalize_transactions, normalize_fraud_cases]
     [normalize_transactions, normalize_fraud_cases] >> dbt_staging
     dbt_staging >> dbt_intermediate
     dbt_intermediate >> dbt_marts

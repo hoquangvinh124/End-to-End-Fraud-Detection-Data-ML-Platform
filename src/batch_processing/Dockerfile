@@ -3,7 +3,10 @@ FROM apache/spark:4.0.2-python3
 USER root
 
 # Install the Delta Lake Python bindings
-RUN pip install --no-cache-dir delta-spark==4.0.0
+RUN pip install --no-cache-dir \
+    delta-spark==4.0.0 \
+    opentelemetry-sdk==1.41.0 \
+    opentelemetry-exporter-otlp-proto-http==1.41.0
 
 # Pre-fetch Kafka + Avro + S3A + Delta JARs via Ivy at build time so the container
 # never needs Maven Central at runtime. Resolved JARs land in $SPARK_HOME/jars/.
@@ -17,12 +20,13 @@ RUN PACKAGES="org.apache.spark:spark-sql-kafka-0-10_2.13:4.0.2,org.apache.spark:
     rm -rf /tmp/ivy /tmp/noop.py
 
 # Bake job configuration into the image — Spark auto-loads this on startup.
-COPY spark-defaults.conf /opt/spark/conf/spark-defaults.conf
+COPY src/batch_processing/spark-defaults.conf /opt/spark/conf/spark-defaults.conf
 
 # Bake all job scripts into the image so no volume mounts are needed at runtime.
-COPY bronze_to_silver/ /opt/bronze_to_silver/
+COPY src/batch_processing/bronze_to_silver/ /opt/bronze_to_silver/
+COPY src/pipeline_monitoring/ /opt/pipeline_monitoring/
 
 # Add /opt to PYTHONPATH so Silver/Gold jobs can import utils.* at runtime.
-ENV PYTHONPATH /opt
+ENV PYTHONPATH=/opt
 
 USER spark

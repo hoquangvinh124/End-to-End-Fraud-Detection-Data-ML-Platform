@@ -1038,7 +1038,7 @@ Replace lines 46-49:
 ```python
 _DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1497906449865773117/8IsOYy6ySXOmN5RDvwyPdbES00hhYZ1VssX4jZnxNgTYzDg2u9_ihaI5qRD-QbO1crKL",
+    "",
 )
 _MATERIALIZE_SCRIPT = os.environ.get(
     "MATERIALIZE_SCRIPT_PATH",
@@ -1052,7 +1052,7 @@ with:
 ```python
 _DISCORD_WEBHOOK = os.environ.get(
     "DISCORD_WEBHOOK_URL",
-    "https://discord.com/api/webhooks/1497906449865773117/8IsOYy6ySXOmN5RDvwyPdbES00hhYZ1VssX4jZnxNgTYzDg2u9_ihaI5qRD-QbO1crKL",
+    "",
 )
 _FEAST_REPO_DIR = os.environ.get(
     "FEAST_REPO_DIR",

@@ -14,7 +14,7 @@
 - ArgoCD: GitOps deploy to GKE
 
 ### Data Pipeline (blue section)
-- **Kafka** (Strimzi): CDC simulator Python producer → topics
+- **Kafka + Debezium**: PostgreSQL row-level CDC → Kafka topics
 - **Flink**: stream processing with tumbling + sliding + session windows
 - **Spark**: Bronze ingestion only (CDC → Delta Lake bronze layer on MinIO)
 - **MinIO**: S3-compatible data lake
@@ -23,7 +23,7 @@
 - **Trino**: query engine over Delta Lake tables on MinIO (Bronze/Staging/Intermediate) AND ClickHouse tables (Marts); enables cross-catalog joins for mart assembly
 - **ClickHouse** (head-distroless): Gold/serving layer storing mart tables only (MergeTree engine)
   - `marts.mart_fraud_ml_features` — flat ML feature table joining all features
-- **Airflow**: orchestration with **astronomer-cosmos 1.14.1** DbtTaskGroups replacing Spark Silver/Gold batch jobs → `[bronze] → dbt_staging → dbt_intermediate → dbt_marts → materialize_online_features`
+- **Airflow**: bounded daily orchestration with a CDC freshness gate → Spark Bronze→Silver normalization → `dbt_staging → dbt_intermediate → dbt_marts → materialize_online_features`. CDC ingestion runs continuously as two Docker services and is not scheduled by Airflow.
 - **>100GB** data via high-throughput Kafka producer
 
 ### Feature Store (green section)
@@ -50,12 +50,12 @@
 - **Knative Eventing**: capture prediction CloudEvents → OTel Collector
 
 ### Observability
-- **Prometheus**: metrics
+- **Prometheus + Alertmanager**: pipeline SLIs, production-like freshness rules, grouped Discord notifications, and resolved notifications
 - **Loki**: logs
 - **Jaeger** (with OpenTelemetry): distributed tracing (rubric requires Jaeger specifically)
-- **OTel Collector**: central telemetry pipeline
-- **Grafana**: single pane of glass (queries Prometheus, Loki, Jaeger)
-- OTel auto-instrumentation
+- **OTel Collector**: central telemetry pipeline for Airflow OTLP, Spark micro-batch metrics, the pipeline observer, and scraped infrastructure exporters
+- **Grafana**: single pane of glass with the provisioned `Lakehouse Pipeline Overview` dashboard
+- **Pipeline observer**: Kafka→Bronze delay plus Bronze/Silver/Gold/Redis health and watermarks; idle topics do not create false stale alerts
 
 ### Storage (shared)
 - PostgreSQL: 1 instance, multiple DBs (mlflow_db, airflow_db)

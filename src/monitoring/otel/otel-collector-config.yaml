@@ -5,6 +5,51 @@ receivers:
         endpoint: 0.0.0.0:4317
       http:
         endpoint: 0.0.0.0:4318
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: minio
+          metrics_path: /minio/v2/metrics/cluster
+          static_configs:
+            - targets: [minio:9000]
+              labels:
+                pipeline_stage: lakehouse
+        - job_name: clickhouse
+          static_configs:
+            - targets: [clickhouse:9363]
+              labels:
+                pipeline_stage: gold
+        - job_name: kafka
+          static_configs:
+            - targets: [kafka-exporter:9308]
+              labels:
+                pipeline_stage: cdc
+        - job_name: redis
+          static_configs:
+            - targets: [redis-exporter:9121]
+              labels:
+                pipeline_stage: online
+        - job_name: blackbox
+          metrics_path: /probe
+          params:
+            module: [http_2xx]
+          static_configs:
+            - targets:
+                - http://airflow-api-server:8080/health
+                - http://kafka-connect:8083/connectors
+                - http://minio:9000/minio/health/live
+                - http://trino:8080/v1/info
+                - http://clickhouse:8123/ping
+                - http://fraud-detection-api:8000/health
+              labels:
+                pipeline_stage: infrastructure
+          relabel_configs:
+            - source_labels: [__address__]
+              target_label: __param_target
+            - source_labels: [__param_target]
+              target_label: instance
+            - target_label: __address__
+              replacement: blackbox-exporter:9115
 
 processors:
   memory_limiter:
@@ -12,18 +57,23 @@ processors:
     limit_mib: 256
     spike_limit_mib: 64
   batch:
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: local
+        action: upsert
 
 exporters:
-  otlp/jaeger:
+  otlp_grpc/jaeger:
     endpoint: jaeger:4317
     tls:
       insecure: true
   prometheus:
     endpoint: "0.0.0.0:8989"
     send_timestamps: true
-    metric_expiration: 180m
+    metric_expiration: 48h
     enable_open_metrics: true
-  otlphttp:
+  otlp_http:
     endpoint: http://loki:3100/otlp
 
 extensions:
@@ -38,13 +88,13 @@ service:
   pipelines:
     traces:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlp/jaeger]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/jaeger]
     metrics:
-      receivers: [otlp]
-      processors: [memory_limiter, batch]
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, resource, batch]
       exporters: [prometheus]
     logs:
       receivers: [otlp]
-      processors: [memory_limiter, batch]
-      exporters: [otlphttp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_http]

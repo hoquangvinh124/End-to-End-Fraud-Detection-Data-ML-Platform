@@ -16,6 +16,7 @@ The repository demonstrates two connected engineering systems:
 
 - [What This Project Demonstrates](#what-this-project-demonstrates)
 - [Verified Demo Snapshot](#verified-demo-snapshot)
+- [Local Performance Snapshot](#local-performance-snapshot)
 - [High-Level System Architecture](#high-level-system-architecture)
 - [Repository Structure](#repository-structure)
 - [Installation and Running](#installation-and-running)
@@ -58,6 +59,17 @@ The values below come from the last successful local end-to-end run on **2026-07
 > **E2E result screenshot placeholder**
 >
 > Capture the PowerShell output from a successful `scripts/e2e_demo.ps1` run, including row counts, Redis keys, model version, probability, and `result: PASS`. Hide usernames, tokens, and unrelated terminal history. Save it as `docs/assets/e2e-result.png`, then replace this callout with `![Successful end-to-end verification](docs/assets/e2e-result.png)`.
+
+## Local Performance Snapshot
+
+The results below were measured on **2026-07-14** using Docker Desktop on a Windows host with 16 logical CPUs and 15.7 GiB of RAM. They describe one local environment and are reproducible portfolio evidence, not production SLAs.
+
+| Workload | Method | Verified result |
+| --- | --- | ---: |
+| Analyst daily aggregate | Equivalent 962-row result, 10 warm-ups and 100 measured queries per engine | ClickHouse Gold p95 **54.77 ms** vs. Trino Silver p95 **3,366.07 ms** (**61.46x faster**) |
+| Online fraud inference | 100 warm-ups, then 3 runs of 1,000 `/predict-online` requests at concurrency 10 | Median p95 **211.58 ms**, **71.17 requests/second**, **0% errors** |
+
+The query benchmark verifies matching row count, unique transaction count, and average amount before calculating the speedup. The online benchmark includes Feast/Redis feature retrieval and ONNX Runtime inference through FastAPI. The complete machine-readable evidence is in [`docs/performance-snapshot.json`](docs/performance-snapshot.json).
 
 ## High-Level System Architecture
 
@@ -277,6 +289,12 @@ Verify PostgreSQL, ClickHouse, Redis, MLflow, the loaded model, and online infer
 
 ```powershell
 .\scripts\e2e_demo.ps1 -ExpectedDate "2026-07-11"
+```
+
+Reproduce the local Silver/Gold query comparison and online inference load test:
+
+```powershell
+uv run python scripts/benchmark_portfolio.py --expected-date 2026-07-11
 ```
 
 ## Demo Video

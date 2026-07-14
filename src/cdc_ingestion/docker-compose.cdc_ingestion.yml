@@ -4,8 +4,12 @@
 services:
   cdc-transactions:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: src/cdc_ingestion/Dockerfile
+    environment: &cdc-otel-environment
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_METRIC_EXPORT_INTERVAL: "15000"
+      DEPLOYMENT_ENVIRONMENT: local
     command:
       - /opt/spark/bin/spark-submit
       - /opt/cdc_ingestion/cdc_transactions_to_bronze.py
@@ -13,8 +17,9 @@ services:
 
   cdc-fraud-cases:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: src/cdc_ingestion/Dockerfile
+    environment: *cdc-otel-environment
     command:
       - /opt/spark/bin/spark-submit
       - /opt/cdc_ingestion/cdc_fraud_cases_to_bronze.py

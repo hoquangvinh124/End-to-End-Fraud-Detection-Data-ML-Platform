@@ -2,10 +2,10 @@
 #
 # Usage:
 #   docker compose -f docker-compose.airflow.yml up -d
-#   open http://localhost:8089  (admin / admin)
+#   open http://localhost:8092  (admin / admin)
 #
 # Airflow 3 service architecture:
-#   api-server     — REST API + web UI  (replaces 2.x webserver, port 8090)
+#   api-server     — REST API + web UI  (replaces 2.x webserver, port 8092)
 #   dag-processor  — parses DAG files   (NEW required service in Airflow 3)
 #   scheduler      — monitors tasks and triggers runs
 #   triggerer      — handles deferrable tasks
@@ -25,13 +25,26 @@
 # directly on the host Docker daemon (same daemon as Kafka/MinIO).
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:3.1.0
+  image: apache/airflow:3.0.2
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
     AIRFLOW__API_SERVER__EXPOSE_CONFIG: "true"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW__METRICS__OTEL_ON: "true"
+    AIRFLOW__METRICS__OTEL_HOST: otel-collector
+    AIRFLOW__METRICS__OTEL_PORT: "4318"
+    AIRFLOW__METRICS__OTEL_PREFIX: airflow
+    AIRFLOW__METRICS__OTEL_INTERVAL_MILLISECONDS: "15000"
+    AIRFLOW__METRICS__OTEL_SSL_ACTIVE: "false"
+    AIRFLOW__TRACES__OTEL_ON: "true"
+    AIRFLOW__TRACES__OTEL_HOST: otel-collector
+    AIRFLOW__TRACES__OTEL_PORT: "4318"
+    AIRFLOW__TRACES__OTEL_APPLICATION: airflow
+    AIRFLOW__TRACES__OTEL_SSL_ACTIVE: "false"
+    AIRFLOW__TRACES__OTEL_TASK_LOG_EVENT: "true"
     # DAG infrastructure config — read by feature_pipeline_daily.py via os.environ
     SPARK_BATCH_IMAGE: "mlops-batch:latest"
     DOCKER_NETWORK: "mlops_default"
@@ -43,11 +56,13 @@ x-airflow-common: &airflow-common
     CLICKHOUSE_HOST: "clickhouse"
     CLICKHOUSE_PORT: "8123"
     MLFLOW_TRACKING_URI: "http://mlflow-server:5000"
-    DISCORD_WEBHOOK_URL: "${DISCORD_WEBHOOK_URL:-}"
-    PYTHONPATH: "/opt/airflow"
+    PROMETHEUS_URL: http://prometheus:9090
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    PYTHONPATH: /opt/airflow
     # Install providers at startup (avoids custom image build)
     # standard provider: BashOperator and other core operators moved here in Airflow 3
     _PIP_ADDITIONAL_REQUIREMENTS: >-
+      apache-airflow[otel]==3.0.2
       apache-airflow-providers-docker>=3.9.0
       apache-airflow-providers-standard>=1.0.0
       astronomer-cosmos==1.14.1
@@ -57,6 +72,7 @@ x-airflow-common: &airflow-common
     - ./dags:/opt/airflow/dags:ro
     - ../api:/opt/airflow/api:ro
     - ../feature_store:/opt/airflow/feature_store:ro
+    - ../pipeline_monitoring:/opt/airflow/pipeline_monitoring:ro
     - ../training:/opt/airflow/training:ro
     - ../dbt:/opt/airflow/dbt:ro
     - airflow_logs:/opt/airflow/logs
@@ -89,8 +105,19 @@ services:
     entrypoint: /bin/bash
     command: >
       -c "
-        pip install 'apache-airflow-providers-docker>=3.9.0' 'apache-airflow-providers-standard>=1.0.0' 'astronomer-cosmos==1.14.1' 'dbt-core~=1.10.0' 'dbt-trino==1.10.1' --quiet &&
-        airflow db migrate
+        pip install
+          'apache-airflow[otel]==3.0.2'
+          'apache-airflow-providers-docker>=3.9.0'
+          'apache-airflow-providers-standard>=1.0.0'
+          'astronomer-cosmos==1.14.1'
+          'dbt-core~=1.10.0'
+          'dbt-trino==1.10.1'
+          --quiet &&
+        airflow db migrate &&
+        airflow users create
+          --username admin --password admin
+          --firstname Admin --lastname User
+          --role Admin --email admin@local.dev
       "
     restart: "no"
 
@@ -100,9 +127,9 @@ services:
     container_name: airflow-api-server
     command: api-server
     ports:
-      - "8089:8080"
+      - "8092:8080"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/monitor/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 5

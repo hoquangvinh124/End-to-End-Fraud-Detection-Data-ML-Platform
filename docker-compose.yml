@@ -18,6 +18,6 @@ include:
   - src/feature_store/docker-compose.redis.yml
   - src/monitoring/docker-compose.observability.yml
   - src/cdc_ingestion/docker-compose.cdc_ingestion.yml
+  - src/orchestration/docker-compose.airflow.yml
   - src/mlflow/docker-compose.mlflow.yml
   - src/batch_processing/docker-compose.batch_processing.yml
-  - src/orchestration/docker-compose.airflow.yml

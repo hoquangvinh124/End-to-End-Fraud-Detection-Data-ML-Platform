@@ -30,6 +30,8 @@ from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
 from utils.schema_registry_helpers import fetch_avro_schema
 
+from pipeline_monitoring.spark_listener import PipelineStreamingQueryListener
+
 
 def build_spark_session() -> SparkSession:
     """Create a plain SparkSession without Hive support (not needed for Parquet bronze)."""
@@ -77,6 +79,7 @@ def build_bronze_rows(raw_df: DataFrame, avro_schema_str: str) -> DataFrame:
 
 def main() -> None:
     spark = build_spark_session()
+    spark.streams.addListener(PipelineStreamingQueryListener("fraud_cases"))
 
     topic = spark.conf.get("spark.bronze.fraud_cases.topic")
     bootstrap_servers = spark.conf.get("spark.bronze.bootstrap.servers")

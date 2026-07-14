@@ -9,6 +9,7 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minio12345}
+      MINIO_PROMETHEUS_AUTH_TYPE: public
     command: server --console-address ":9001" /data
     volumes:
       - minio_data:/data
@@ -109,11 +110,13 @@ services:
     ports:
       - "8123:8123"
       - "19000:9000"
+      - "9363:9363"
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-abcbank}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-abcbank}
     volumes:
       - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/config.d/prometheus.xml:/etc/clickhouse-server/config.d/prometheus.xml:ro
     healthcheck:
       test: ["CMD", "clickhouse-client", "--user", "${CLICKHOUSE_USER:-abcbank}", "--password", "${CLICKHOUSE_PASSWORD:-abcbank}", "--query", "SELECT 1"]
       interval: 10s
@@ -121,8 +124,24 @@ services:
       retries: 5
       start_period: 15s
 
+  redis:
+    image: redis:7.4-alpine
+    container_name: redis
+    hostname: redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 volumes:
   minio_data:
   metastore_db_data:
   clickhouse_data:
   trino_spill:
+  redis_data:

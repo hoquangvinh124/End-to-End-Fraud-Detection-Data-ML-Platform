@@ -1,0 +1,128 @@
+groups:
+  - name: lakehouse-pipeline-critical
+    interval: 15s
+    rules:
+      - alert: PipelineComponentDown
+        expr: mlops_pipeline_component_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          pipeline_stage: '{{ $labels.pipeline_stage }}'
+        annotations:
+          summary: 'Pipeline component {{ $labels.service_name }} is down'
+          description: 'No healthy signal has been reported for two minutes.'
+
+      - alert: TransactionsCDCHeartbeatMissing
+        expr: absent(mlops_pipeline_heartbeat_time{dataset="transactions",pipeline_stage="bronze"}) or (time() - max(mlops_pipeline_heartbeat_time{dataset="transactions",pipeline_stage="bronze"}) > 120)
+        for: 2m
+        labels:
+          severity: critical
+          pipeline_stage: bronze
+          dataset: transactions
+        annotations:
+          summary: Transactions CDC heartbeat is missing
+          description: The transactions Structured Streaming query has not reported progress for over two minutes.
+
+      - alert: FraudCasesCDCHeartbeatMissing
+        expr: absent(mlops_pipeline_heartbeat_time{dataset="fraud_cases",pipeline_stage="bronze"}) or (time() - max(mlops_pipeline_heartbeat_time{dataset="fraud_cases",pipeline_stage="bronze"}) > 120)
+        for: 2m
+        labels:
+          severity: critical
+          pipeline_stage: bronze
+          dataset: fraud_cases
+        annotations:
+          summary: Fraud cases CDC heartbeat is missing
+          description: The fraud cases Structured Streaming query has not reported progress for over two minutes.
+
+      - alert: CDCProcessingDelayHigh
+        expr: mlops_pipeline_processing_delay{pipeline_stage="bronze"} > 300
+        for: 1m
+        labels:
+          severity: critical
+          pipeline_stage: bronze
+        annotations:
+          summary: '{{ $labels.dataset }} CDC is more than five minutes behind'
+          description: Kafka has advanced but the Bronze watermark has not caught up.
+
+      - alert: FeaturePipelineDagFailed
+        expr: increase(airflow_dagrun_duration_failed_count{dag_id="feature_pipeline_daily"}[10m]) > 0
+        labels:
+          severity: critical
+          pipeline_stage: orchestration
+          dataset: all
+        annotations:
+          summary: feature_pipeline_daily failed
+          description: Airflow emitted a failed DagRun during the last ten minutes.
+
+      - alert: FeaturePipelineDailyDeadlineMissed
+        expr: (hour() == 4 and minute() >= 30) and increase(airflow_dagrun_duration_success_count{dag_id="feature_pipeline_daily"}[27h]) < 1
+        for: 5m
+        labels:
+          severity: critical
+          pipeline_stage: orchestration
+          dataset: all
+        annotations:
+          summary: Daily feature pipeline missed the 04:30 UTC deadline
+          description: No successful DagRun was observed during the previous 27 hours.
+
+      - alert: OnlineFeaturesNotRefreshed
+        expr: time() - mlops_pipeline_last_success_time{pipeline_stage="online"} > 97200
+        for: 5m
+        labels:
+          severity: critical
+          pipeline_stage: online
+          dataset: features
+        annotations:
+          summary: Feast online features are stale
+          description: Redis has not received a successful feature materialization for over 27 hours.
+
+  - name: lakehouse-pipeline-warning
+    interval: 30s
+    rules:
+      - alert: CDCMicroBatchSlow
+        expr: histogram_quantile(0.95, sum by (le, dataset) (rate(mlops_pipeline_batch_duration_bucket{pipeline_stage="bronze"}[15m]))) > 300
+        for: 5m
+        labels:
+          severity: warning
+          pipeline_stage: bronze
+        annotations:
+          summary: '{{ $labels.dataset }} micro-batches exceed the trigger interval'
+          description: The 95th percentile batch duration has exceeded five minutes.
+
+      - alert: CDCOffsetBacklogGrowing
+        expr: deriv(mlops_pipeline_offsets_behind{pipeline_stage="bronze"}[15m]) > 0
+        for: 10m
+        labels:
+          severity: warning
+          pipeline_stage: bronze
+        annotations:
+          summary: '{{ $labels.dataset }} Kafka backlog is growing'
+          description: Offsets behind have increased continuously during the last ten minutes.
+
+      - alert: CuratedLayerStale
+        expr: mlops_pipeline_freshness{pipeline_stage=~"silver|gold"} > 97200
+        for: 15m
+        labels:
+          severity: warning
+          pipeline_stage: '{{ $labels.pipeline_stage }}'
+        annotations:
+          summary: '{{ $labels.dataset }} {{ $labels.pipeline_stage }} data is stale'
+          description: The latest observed watermark is older than 27 hours.
+
+      - alert: QuarantineRowsIncreasing
+        expr: increase(mlops_pipeline_quarantine_rows_total[30m]) > 0
+        labels:
+          severity: warning
+          pipeline_stage: silver
+        annotations:
+          summary: '{{ $labels.dataset }} rows entered quarantine'
+          description: New invalid Bronze records were quarantined during normalization.
+
+      - alert: PipelineFailuresIncreasing
+        expr: increase(mlops_pipeline_failures_total[15m]) > 0
+        labels:
+          severity: warning
+          pipeline_stage: '{{ $labels.pipeline_stage }}'
+        annotations:
+          summary: '{{ $labels.service_name }} emitted pipeline failures'
+          description: One or more instrumented operations failed in the last 15 minutes.

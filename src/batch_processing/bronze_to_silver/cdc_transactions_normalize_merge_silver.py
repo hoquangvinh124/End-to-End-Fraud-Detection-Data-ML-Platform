@@ -34,6 +34,9 @@ from pyspark.sql import functions as F
 from pyspark.sql import types as T
 from pyspark.sql import window as W
 
+from pipeline_monitoring.batch_metrics import record_quarantine_rows
+from pipeline_monitoring.telemetry import MetricSink, OtelMetricSink
+
 JOB_NAME = "silver-transactions"
 
 SILVER_DATABASE = "silver"
@@ -133,12 +136,14 @@ def validate_and_split(df: DataFrame) -> tuple[DataFrame, DataFrame]:
     return valid_df, quarantine_df
 
 
-def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> None:
+def write_quarantine(quarantine_path: str, quarantine_df: DataFrame) -> int:
     """Append invalid rows to the quarantine Delta table (audit log)."""
     if quarantine_df.isEmpty():
-        return
+        return 0
+    row_count = quarantine_df.count()
     quarantine_df.write.format("delta").mode("append").save(quarantine_path)
     print(f"[{JOB_NAME}] quarantined bad rows → {quarantine_path}")
+    return row_count
 
 
 def merge_to_silver(spark: SparkSession, silver_path: str, batch_df: DataFrame) -> None:
@@ -199,19 +204,23 @@ def process_batch(
     spark: SparkSession,
     silver_path: str,
     quarantine_path: str,
+    metric_sink: MetricSink | None = None,
 ) -> None:
     """foreachBatch handler for the Silver transactions stream."""
     if batch_df.isEmpty():
         return
     typed_df = cast_types(batch_df)
     valid_df, quarantine_df = validate_and_split(typed_df)
-    write_quarantine(quarantine_path, quarantine_df)
+    quarantine_rows = write_quarantine(quarantine_path, quarantine_df)
+    if metric_sink:
+        record_quarantine_rows(metric_sink, "transactions", quarantine_rows)
     merge_to_silver(spark, silver_path, valid_df)
     print(f"[{JOB_NAME}] batch {batch_id} processed.")
 
 
 def main() -> None:
     spark = build_spark_session()
+    metric_sink = OtelMetricSink(JOB_NAME)
 
     bronze_path = spark.conf.get("spark.silver.bronze.input.path")
     silver_path = spark.conf.get("spark.silver.output.path")
@@ -234,6 +243,7 @@ def main() -> None:
                 spark=spark,
                 silver_path=silver_path,
                 quarantine_path=quarantine_path,
+                metric_sink=metric_sink,
             )
         )
         .option("checkpointLocation", checkpoint_path)
@@ -241,6 +251,7 @@ def main() -> None:
         .awaitTermination()
     )
     register_silver_table(spark, silver_path)
+    metric_sink.force_flush()
 
 
 if __name__ == "__main__":

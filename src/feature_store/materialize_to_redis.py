@@ -13,12 +13,16 @@ from __future__ import annotations
 
 import argparse
 import os
-from datetime import date, timedelta
+import time
+from collections.abc import Callable
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import clickhouse_connect
 import pandas as pd
 from feast import FeatureStore
+
+from pipeline_monitoring.telemetry import MetricSink, OtelMetricSink
 
 
 def _get_client() -> clickhouse_connect.driver.Client:
@@ -53,8 +57,20 @@ def _resolve_feature_date(feature_date_str: str | None) -> str:
     return (date.today() - timedelta(days=1)).isoformat()
 
 
-def materialize(store: FeatureStore, feature_date: str) -> None:
+def materialize(
+    store: FeatureStore,
+    feature_date: str,
+    *,
+    sink: MetricSink | None = None,
+    clock: Callable[[], float] = time.time,
+) -> None:
     client = _get_client()
+    started_at = clock()
+    base_labels = {
+        "dataset": "features",
+        "pipeline.stage": "online",
+        "service.name": "feast-materializer",
+    }
     try:
         # -- Customer features ----------------------------------------------
         customer_df: pd.DataFrame = client.query_df(
@@ -88,6 +104,12 @@ def materialize(store: FeatureStore, feature_date: str) -> None:
                 feature_view_name="customer_features_view",
                 df=customer_df,
             )
+            if sink:
+                sink.add_counter(
+                    "mlops.pipeline.records.processed",
+                    float(len(customer_df)),
+                    {**base_labels, "dataset": "customer_features"},
+                )
             print(f"[materialize] pushed {len(customer_df)} customer rows for {feature_date}")
 
         # -- Terminal features ----------------------------------------------
@@ -122,9 +144,37 @@ def materialize(store: FeatureStore, feature_date: str) -> None:
                 feature_view_name="terminal_features_view",
                 df=terminal_df,
             )
+            if sink:
+                sink.add_counter(
+                    "mlops.pipeline.records.processed",
+                    float(len(terminal_df)),
+                    {**base_labels, "dataset": "terminal_features"},
+                )
             print(f"[materialize] pushed {len(terminal_df)} terminal rows for {feature_date}")
 
+        if sink:
+            watermark = datetime.combine(
+                date.fromisoformat(feature_date), datetime.min.time(), tzinfo=timezone.utc
+            ).timestamp()
+            sink.set_gauge(
+                "mlops.pipeline.data.watermark.time", watermark, base_labels
+            )
+            sink.set_gauge(
+                "mlops.pipeline.last_success.time", clock(), base_labels
+            )
+            sink.set_gauge("mlops.pipeline.component.up", 1.0, base_labels)
+            sink.record_histogram(
+                "mlops.pipeline.batch.duration", clock() - started_at, base_labels
+            )
+
     except clickhouse_connect.driver.exceptions.ClickHouseError as exc:
+        if sink:
+            sink.set_gauge("mlops.pipeline.component.up", 0.0, base_labels)
+            sink.add_counter(
+                "mlops.pipeline.failures",
+                1.0,
+                {**base_labels, "status": "failed"},
+            )
         raise RuntimeError(
             f"ClickHouse query failed for {feature_date}: {exc}"
         ) from exc
@@ -147,7 +197,9 @@ def main() -> None:
     feature_date = _resolve_feature_date(args.feature_date)
     repo_path = Path(__file__).parent
     store = FeatureStore(repo_path=str(repo_path))
-    materialize(store, feature_date)
+    sink = OtelMetricSink("feast-materializer")
+    materialize(store, feature_date, sink=sink)
+    sink.force_flush()
 
 
 if __name__ == "__main__":

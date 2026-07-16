@@ -1,65 +1,92 @@
-# MLOps Fraud Detection Platform — Architecture Context
+# Banking Fraud Detection Platform Architecture
 
-## Project
-- **Domain**: Credit card fraud detection (financial)
-- **Solo developer** academic project covering 3 rubrics (Basic MLOps, Serving Pipeline, Data Pipeline)
-- **Target**: GKE deployment, Docker Compose for local dev
+## Scope
 
-## Finalized Architecture
+This document describes the architecture implemented by the repository and the
+local Docker Compose stack. Planned cloud components are listed separately and
+must not be interpreted as completed work.
 
-### CI/CD
-- GitHub Actions CI: lint (runs `uv run ruff check .`) -> test (runs `uv run pytest --cov=api --cov-report=term-missing --cov-fail-under=80`)
-- GitHub Actions Build: after CI succeeds on `vinh-branch` or `main`, build and publish `ghcr.io/hoquangvinh124/mlops` with a bare short SHA tag plus `latest` on `main` or `vinh-branch` on `vinh-branch`
-- Future CD target: deployment flow remains separate from CI and image publishing
-- ArgoCD: GitOps deploy to GKE
+## Implemented Data Platform
 
-### Data Pipeline (blue section)
-- **Kafka + Debezium**: PostgreSQL row-level CDC → Kafka topics
-- **Flink**: stream processing with tumbling + sliding + session windows
-- **Spark**: Bronze ingestion only (CDC → Delta Lake bronze layer on MinIO)
-- **MinIO**: S3-compatible data lake
-- **Delta Lake**: table format on MinIO (Bronze + Silver layers: Staging + Intermediate incremental merge, ACID)
-- **dbt + Trino** (dbt-trino 1.10.1, Trino 481): transforms Bronze → **Silver** Staging + Intermediate (Delta Lake on MinIO via Trino lakehouse catalog, incremental merge) → **Gold** Marts (ClickHouse via Trino clickhouse catalog); dbt-codegen automates source/model YAML generation
-- **Trino**: query engine over Delta Lake tables on MinIO (Bronze/Staging/Intermediate) AND ClickHouse tables (Marts); enables cross-catalog joins for mart assembly
-- **ClickHouse** (head-distroless): Gold/serving layer storing mart tables only (MergeTree engine)
-  - `marts.mart_fraud_ml_features` — flat ML feature table joining all features
-- **Airflow**: bounded daily orchestration with a CDC freshness gate → Spark Bronze→Silver normalization → `dbt_staging → dbt_intermediate → dbt_marts → materialize_online_features`. CDC ingestion runs continuously as two Docker services and is not scheduled by Airflow.
-- **>100GB** data via high-throughput Kafka producer
+### Source and CDC
 
-### Feature Store (green section)
-- **Feast**: feature store (`src/feature_store/`)
-  - Offline store: **file** (reads Gold Delta Parquet files from MinIO via S3 FileSource for training data from historical Gold)
-  - Online store: **Redis** (<10ms lookup)
-  - Three feature views: `fraud_ml_features_view` (offline, training), `customer_features_view` + `terminal_features_view` (online+offline)
-  - Materialization: direct ClickHouse reads via **clickhouse-connect 0.15.1** → `write_to_online_store()` (bypasses offline store file-based reads)
+- PostgreSQL stores the synthetic banking OLTP workload.
+- Debezium captures row-level changes and publishes Avro events to Kafka.
+- Confluent Schema Registry supplies the transaction and fraud-case schemas.
+- Two Spark Structured Streaming services run continuously and write CDC
+  micro-batches to the MinIO Bronze layer.
 
-### Training & Registry (green section)
-- **MLflow**: experiment tracking + model registry
-  - Backend: PostgreSQL
-  - Artifacts: **GCS bucket**
-- **Airflow DAG**: ingest → validate → feature_eng → train → evaluate → register
-- Auto-deploy promoted model to KServe/Triton
+### Lakehouse Layers
 
-### Model Serving (orange section)
-- **Traefik**: GKE ingress / edge router (TLS termination, host/path routing)
-- **KServe InferenceService**: main prediction path behind Traefik
-  - Transformer: Feast online lookup (Redis) → build feature vector
-  - Predictor: **Triton Inference Server** (ONNX runtime)
-- XGBoost → ONNX export
-- **FastAPI**: current local/prototype API only, not part of the target GKE serving path
-- **Knative Eventing**: capture prediction CloudEvents → OTel Collector
+- Bronze preserves append-only CDC history and source metadata.
+- Spark normalizes Bronze events, validates required fields, quarantines invalid
+  rows, deduplicates by PostgreSQL LSN, and applies update/delete-aware Delta
+  Lake merges into Silver.
+- Trino exposes the Delta Lake tables stored in MinIO.
+- dbt builds staging, intermediate, and incremental feature models.
+- ClickHouse stores the `gold.mart_fraud_ml_features` serving mart.
 
-### Observability
-- **Prometheus + Alertmanager**: pipeline SLIs, production-like freshness rules, grouped Discord notifications, and resolved notifications
-- **Loki**: logs
-- **Jaeger** (with OpenTelemetry): distributed tracing (rubric requires Jaeger specifically)
-- **OTel Collector**: central telemetry pipeline for Airflow OTLP, Spark micro-batch metrics, the pipeline observer, and scraped infrastructure exporters
-- **Grafana**: single pane of glass with the provisioned `Lakehouse Pipeline Overview` dashboard
-- **Pipeline observer**: Kafka→Bronze delay plus Bronze/Silver/Gold/Redis health and watermarks; idle topics do not create false stale alerts
+### Orchestration
 
-### Storage (shared)
-- PostgreSQL: 1 instance, multiple DBs (mlflow_db, airflow_db)
-- Redis: standalone (Feast online store)
-- MinIO: data lake (Delta Lake tables for Bronze + Silver: Staging + Intermediate, raw data)
-- ClickHouse: Gold/serving layer (Marts tables only, MergeTree engine)
-- GCS: MLflow artifacts, model registry
+CDC ingestion is a long-running service and is not scheduled by Airflow. The
+daily `feature_pipeline_daily` DAG performs the bounded workflow:
+
+```text
+CDC freshness gate
+  -> Bronze-to-Silver normalization
+  -> dbt staging
+  -> dbt intermediate
+  -> dbt Gold mart
+  -> Feast/Redis materialization
+  -> train, export ONNX, and register in MLflow
+```
+
+Airflow uses task retries, execution timeouts, and OpenTelemetry metrics and
+traces. The freshness sensor fails closed when either CDC dataset is unhealthy
+or more than five minutes behind.
+
+## Implemented ML Lifecycle
+
+- ClickHouse Gold is the bounded offline training source.
+- Feast defines customer and terminal features and materializes them to Redis.
+- The training job fits a reproducible scikit-learn pipeline, logs parameters
+  and evaluation metrics, exports an ONNX artifact, and registers a model
+  version in MLflow.
+- MLflow uses PostgreSQL for metadata and MinIO for artifacts.
+- The Registry `champion` alias selects the version loaded by the API.
+- FastAPI combines request-time fields with Feast/Redis online features and
+  performs inference with ONNX Runtime.
+
+The notebook LightGBM evaluation and the registered Logistic Regression model
+are separate artifacts and should not be presented as the same model.
+
+## Implemented Observability
+
+- OpenTelemetry Collector receives API, Airflow, Spark, materialization, and
+  pipeline-observer telemetry.
+- Prometheus stores metrics and evaluates freshness, backlog, failure, and
+  availability rules.
+- Grafana provisions separate Fraud API and Lakehouse Pipeline dashboards.
+- Alertmanager groups alerts and optionally delivers them to Discord using a
+  webhook supplied through local configuration.
+- Loki stores API logs and Jaeger stores distributed traces.
+- Kafka, Redis, ClickHouse, MinIO, and HTTP health exporters provide supporting
+  infrastructure signals.
+
+## Delivery Boundary
+
+GitHub Actions runs linting, tests, and an 80% API coverage gate. After a
+successful internal branch build, it publishes a commit-addressed API image to
+GitHub Container Registry. This is container delivery, not automatic deployment
+to a runtime environment.
+
+## Planned Evolution
+
+The following components are roadmap items only:
+
+- Kubernetes or GKE deployment.
+- KServe-managed inference and autoscaling.
+- Argo CD environment promotion and rollback.
+- Managed object storage, metadata services, and secret management.
+- Authenticated APIs, TLS, model approval gates, drift monitoring, and a
+  ground-truth feedback loop.

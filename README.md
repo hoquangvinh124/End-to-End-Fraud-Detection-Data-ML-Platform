@@ -37,7 +37,8 @@ The repository demonstrates two connected engineering systems:
 - ClickHouse Gold as the offline training source, with Feast definitions and Redis materialization for low-latency customer and terminal features.
 - Model experiment tracking, ONNX artifact logging, Registry versioning, and promotion through the MLflow `champion` alias.
 - FastAPI inference that loads the promoted model and combines request-time fields with online features.
-- Daily orchestration in Airflow, plus metrics, logs, and traces through Prometheus, Grafana, Loki, OpenTelemetry, and Jaeger.
+- Freshness-gated daily orchestration in Airflow while CDC ingestion remains continuously running.
+- Lakehouse and API observability through OpenTelemetry, Prometheus, Grafana, Alertmanager, Loki, and Jaeger.
 - GitHub Actions quality gates and container delivery to GitHub Container Registry.
 
 ## Verified Demo Snapshot
@@ -52,7 +53,7 @@ The values below come from the last successful local end-to-end run on **2026-07
 | Redis online store | 10,275 keys |
 | Promoted MLflow model | `fraud-detection:champion` -> version 2 |
 | dbt validation | 52 / 52 checks passed |
-| Python test suite | 89 tests passed |
+| Python test suite | 122 tests passed |
 | API coverage | 87.98% (CI gate: 80%) |
 | Online prediction | Valid probability returned from `/predict-online` |
 
@@ -66,10 +67,10 @@ The results below were measured on **2026-07-14** using Docker Desktop on a Wind
 
 | Workload | Method | Verified result |
 | --- | --- | ---: |
-| Analyst daily aggregate | Equivalent 962-row result, 10 warm-ups and 100 measured queries per engine | ClickHouse Gold p95 **54.77 ms** vs. Trino Silver p95 **3,366.07 ms** (**61.46x faster**) |
+| Analyst daily aggregate | Equivalent 962-row result, 10 warm-ups and 100 measured queries per path | Gold serving path p95 **54.77 ms** vs. Silver query path p95 **3,366.07 ms** (**98.4% lower latency**) |
 | Online fraud inference | 100 warm-ups, then 3 runs of 1,000 `/predict-online` requests at concurrency 10 | Median p95 **211.58 ms**, **71.17 requests/second**, **0% errors** |
 
-The query benchmark verifies matching row count, unique transaction count, and average amount before calculating the speedup. The online benchmark includes Feast/Redis feature retrieval and ONNX Runtime inference through FastAPI. The complete machine-readable evidence is in [`docs/performance-snapshot.json`](docs/performance-snapshot.json).
+The query benchmark verifies matching row count, unique transaction count, and average amount. It measures an end-to-end Silver query path against a purpose-built Gold serving path, not an isolated Trino-versus-ClickHouse engine comparison. The online benchmark includes Feast/Redis feature retrieval and ONNX Runtime inference through FastAPI. The complete machine-readable evidence is in [`docs/performance-snapshot.json`](docs/performance-snapshot.json).
 
 ## High-Level System Architecture
 
@@ -80,30 +81,25 @@ PostgreSQL OLTP
       v
 Kafka + Schema Registry
       |
-      | Spark ingestion
+      | continuous Spark Structured Streaming
       v
-MinIO Bronze (Delta) -> Spark normalize/merge -> MinIO Silver (Delta)
-                                                   |
-                                                   | Trino + dbt
-                                                   v
-                                      ClickHouse Gold feature mart
-                                         |                     |
-                             Feast materialization      Offline training
-                                         |                     |
-                                         v                     v
-                                      Redis              MLflow Registry
-                                         |                 champion alias
-                                         +---------+-----------+
-                                                   |
-                                                   v
-                                      FastAPI + ONNX Runtime
-                                                   |
-                                      metrics, logs, and traces
-                                                   |
-                                                   v
-                              Prometheus / Grafana / Loki / Jaeger
+MinIO Bronze (Delta)
+      |
+      | Airflow freshness gate -> Spark normalize/merge
+      v
+MinIO Silver (Delta) -> Trino + dbt -> ClickHouse Gold feature mart
+                                               |              |
+                                  Feast materialization   Offline training
+                                               |              |
+                                               v              v
+                                            Redis       MLflow Registry
+                                               |        champion alias
+                                               +-------> FastAPI + ONNX
 
-Airflow schedules and monitors the batch, feature, and training lifecycle.
+Pipeline and API telemetry -> OpenTelemetry Collector
+      |-> Prometheus -> Grafana -> Alertmanager
+      |-> Loki (logs)
+      `-> Jaeger (traces)
 ```
 
 > **Architecture diagram placeholder**
@@ -112,11 +108,11 @@ Airflow schedules and monitors the batch, feature, and training lifecycle.
 
 ### Orchestration Flow
 
-The `feature_pipeline_daily` Airflow DAG executes the lifecycle in dependency order:
+CDC ingestion runs continuously as two Compose services. The `feature_pipeline_daily` Airflow DAG waits for healthy, sufficiently fresh CDC data before executing the bounded lifecycle:
 
 ```text
-CDC ingestion -> Bronze -> Silver -> dbt staging -> dbt intermediate -> dbt marts
--> Feast materialization -> train, register, and promote model
+CDC freshness gate -> Bronze-to-Silver merge -> dbt staging -> dbt intermediate
+-> dbt Gold mart -> Feast/Redis materialization -> train/register MLflow model
 ```
 
 > **Airflow screenshot placeholder**
@@ -125,7 +121,7 @@ CDC ingestion -> Bronze -> Silver -> dbt staging -> dbt intermediate -> dbt mart
 
 ### Model Lifecycle
 
-Training reads a bounded, time-ordered dataset from `gold.mart_fraud_ml_features`, logs metrics and artifacts to MLflow, exports an ONNX model, creates a Registry version, and moves the `champion` alias to the new version. The API resolves that alias on startup and prefers ONNX Runtime for inference.
+Training reads a bounded chronological window from `gold.mart_fraud_ml_features`, uses a reproducible stratified split, logs metrics and artifacts to MLflow, exports an ONNX model, creates a Registry version, and moves the `champion` alias to the new version. The API resolves that alias on startup and prefers ONNX Runtime for inference.
 
 > **MLflow screenshot placeholder**
 >
@@ -133,11 +129,15 @@ Training reads a bounded, time-ordered dataset from `gold.mart_fraud_ml_features
 
 ### Observability
 
-OpenTelemetry instruments the inference API and exports telemetry to the local monitoring stack. Prometheus stores metrics, Grafana provides dashboards, Loki stores logs, and Jaeger exposes distributed traces.
+OpenTelemetry instruments both the inference API and data pipeline. The Lakehouse dashboard covers CDC throughput, offset backlog, micro-batch duration, layer freshness, component health, Airflow task duration, and active alerts. The API dashboard covers request rate, p95 latency, HTTP errors, process resources, logs, and traces. Prometheus evaluates alert rules, Alertmanager optionally delivers firing and resolved incidents to Discord, Loki stores logs, and Jaeger exposes distributed traces.
 
 > **Grafana screenshot placeholder**
 >
-> Capture a representative inference window showing request rate, latency, error rate, and model prediction metrics. Use a readable time range and hide local credentials. Save it as `docs/assets/grafana-dashboard.png`, then replace this callout with `![Fraud inference observability dashboard](docs/assets/grafana-dashboard.png)`.
+> Capture a representative inference window showing request rate, p95 latency, error rate, and resource usage. Use a readable time range and hide local credentials. Save it as `docs/assets/grafana-dashboard.png`, then replace this callout with `![Fraud inference observability dashboard](docs/assets/grafana-dashboard.png)`.
+
+> **Lakehouse monitoring screenshot placeholder**
+>
+> Capture the `Lakehouse Pipeline Overview` dashboard with healthy components, both datasets selected, visible freshness and micro-batch panels, and no sensitive labels. Save it as `docs/assets/lakehouse-pipeline-dashboard.png`, then replace this callout with `![Lakehouse pipeline observability dashboard](docs/assets/lakehouse-pipeline-dashboard.png)`.
 
 ## Repository Structure
 
@@ -158,8 +158,9 @@ MLOps/
 |   |-- feature_store/       # Feast entities, feature views, and Redis materialization
 |   |-- lakehouse/           # MinIO, Hive Metastore, Trino, and ClickHouse
 |   |-- mlflow/              # MLflow tracking server and artifact configuration
-|   |-- monitoring/          # OpenTelemetry, Prometheus, Grafana, Loki, and Jaeger
+|   |-- monitoring/          # Telemetry routing, dashboards, probes, and alert rules
 |   |-- orchestration/       # Airflow deployment and daily pipeline DAG
+|   |-- pipeline_monitoring/ # CDC, freshness, health, and batch metric instrumentation
 |   |-- scripts/             # Seed loading and current-date data generation
 |   |-- tests/               # Unit, integration, contract, and orchestration tests
 |   `-- training/            # Offline training, ONNX export, and registration
@@ -229,9 +230,10 @@ When `--start-date` is omitted, the generator reads the latest OLTP transaction 
 | --- | --- | --- |
 | FastAPI | [http://localhost:8000/docs](http://localhost:8000/docs) | Interactive inference API |
 | MLflow | [http://localhost:5000](http://localhost:5000) | Experiments, artifacts, and Model Registry |
-| Airflow | [http://localhost:8089](http://localhost:8089) | Pipeline scheduling and task logs |
+| Airflow | [http://localhost:8092](http://localhost:8092) | Pipeline scheduling and task logs |
 | Grafana | [http://localhost:3000](http://localhost:3000) | Operational dashboards |
 | Prometheus | [http://localhost:9090](http://localhost:9090) | Metrics and target health |
+| Alertmanager | [http://localhost:9093](http://localhost:9093) | Pipeline alert routing and status |
 | Jaeger | [http://localhost:16686](http://localhost:16686) | Distributed traces |
 | Kafka UI | [http://localhost:8080](http://localhost:8080) | Topics, messages, and consumer state |
 | MinIO Console | [http://localhost:9001](http://localhost:9001) | Lakehouse objects and MLflow artifacts |
@@ -280,6 +282,7 @@ Validate dbt while Trino, MinIO, Hive Metastore, and ClickHouse are running:
 
 ```powershell
 Set-Location src/dbt
+Copy-Item profiles.yml.example profiles.yml
 uv run dbt deps
 uv run dbt build --profiles-dir .
 Set-Location ../..

@@ -12,6 +12,8 @@ services:
       MLFLOW_MODEL_NAME: fraud-detection
       MLFLOW_MODEL_ALIAS: champion
       FEAST_REPO_PATH: /app/feature_store
+      CLICKHOUSE_HOST: clickhouse
+      CLICKHOUSE_PORT: "8123"
       OTEL_SERVICE_NAME: fraud-detection-api
       OTEL_TRACES_EXPORTER: otlp
       OTEL_METRICS_EXPORTER: otlp

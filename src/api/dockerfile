@@ -32,6 +32,7 @@ ENV PYTHONUNBUFFERED=1
 
 COPY --chown=user:user src/api/ ./api/
 COPY --chown=user:user src/feature_store/ ./feature_store/
+COPY --chown=user:user src/pipeline_monitoring/ ./pipeline_monitoring/
 COPY --chown=user:user src/training/ ./training/
 COPY --chown=user:user models/ ./models/
 

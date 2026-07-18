@@ -65,6 +65,11 @@ services:
       KAFKA_CONNECT_URL: http://kafka-connect:8083
       TRINO_HOST: trino
       TRINO_PORT: "8080"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minio}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minio12345}
+      MINIO_REGION: us-east-1
+      BRONZE_BUCKET: bronze
       CLICKHOUSE_HOST: clickhouse
       CLICKHOUSE_PORT: "8123"
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-abcbank}
@@ -75,12 +80,25 @@ services:
     depends_on:
       otel-collector:
         condition: service_started
+      kafka-connect:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      trino:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   kafka-exporter:
     image: danielqsj/kafka-exporter:v1.8.0
     container_name: kafka-exporter
     command: ["--kafka.server=kafka:9092"]
     restart: unless-stopped
+    depends_on:
+      kafka:
+        condition: service_healthy
 
   redis-exporter:
     image: oliver006/redis_exporter:v1.66.0
@@ -88,6 +106,9 @@ services:
     environment:
       REDIS_ADDR: redis://redis:6379
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
 
   blackbox-exporter:
     image: prom/blackbox-exporter:v0.25.0

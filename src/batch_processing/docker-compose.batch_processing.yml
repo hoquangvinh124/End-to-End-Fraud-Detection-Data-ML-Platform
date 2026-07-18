@@ -12,6 +12,8 @@
 
 services:
   silver-transactions:
+    image: mlops-batch:latest
+    profiles: ["batch"]
     build:
       context: ../..
       dockerfile: src/batch_processing/Dockerfile
@@ -26,6 +28,8 @@ services:
       - mlops_default
 
   silver-fraud-cases:
+    image: mlops-batch:latest
+    profiles: ["batch"]
     build:
       context: ../..
       dockerfile: src/batch_processing/Dockerfile

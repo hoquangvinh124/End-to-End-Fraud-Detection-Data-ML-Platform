@@ -25,7 +25,10 @@
 # directly on the host Docker daemon (same daemon as Kafka/MinIO).
 
 x-airflow-common: &airflow-common
-  image: apache/airflow:3.1.0
+  image: mlops-airflow:3.1.0
+  build:
+    context: ../..
+    dockerfile: src/orchestration/Dockerfile
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
@@ -59,21 +62,14 @@ x-airflow-common: &airflow-common
     MATERIALIZE_SCRIPT_PATH: "/opt/airflow/feature_store/materialize_to_redis.py"
     TRINO_HOST: "trino"
     TRINO_PORT: "8080"
+    AIRFLOW_CONN_TRINO_DEFAULT: "trino://airflow@trino:8080"
     CLICKHOUSE_HOST: "clickhouse"
     CLICKHOUSE_PORT: "8123"
     MLFLOW_TRACKING_URI: "http://mlflow-server:5000"
     PROMETHEUS_URL: http://prometheus:9090
     OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+    DBT_LOG_PATH: /tmp/dbt-logs
     PYTHONPATH: /opt/airflow
-    # Install providers at startup (avoids custom image build)
-    # standard provider: BashOperator and other core operators moved here in Airflow 3
-    _PIP_ADDITIONAL_REQUIREMENTS: >-
-      apache-airflow[otel]==3.1.0
-      apache-airflow-providers-docker>=3.9.0
-      apache-airflow-providers-standard>=1.0.0
-      astronomer-cosmos==1.14.1
-      dbt-core~=1.10.0
-      dbt-trino==1.10.1
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - ../api:/opt/airflow/api:ro
@@ -81,6 +77,7 @@ x-airflow-common: &airflow-common
     - ../pipeline_monitoring:/opt/airflow/pipeline_monitoring:ro
     - ../training:/opt/airflow/training:ro
     - ../dbt:/opt/airflow/dbt:ro
+    - airflow_dbt_target:/opt/airflow/dbt/target
     - airflow_logs:/opt/airflow/logs
     # DockerOperator needs access to host Docker daemon
     - /var/run/docker.sock:/var/run/docker.sock
@@ -105,6 +102,14 @@ services:
       retries: 5
     restart: unless-stopped
 
+  airflow-dbt-target-init:
+    image: busybox:1.37
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 50000:0 /target"]
+    volumes:
+      - airflow_dbt_target:/target
+    restart: "no"
+
   airflow-init:
     <<: *airflow-common
     container_name: airflow-init
@@ -112,14 +117,16 @@ services:
     command:
       - -c
       - |
-        pip install --quiet \
-          'apache-airflow[otel]==3.1.0' \
-          'apache-airflow-providers-docker>=3.9.0' \
-          'apache-airflow-providers-standard>=1.0.0' \
-          'astronomer-cosmos==1.14.1' \
-          'dbt-core~=1.10.0' \
-          'dbt-trino==1.10.1'
         airflow db migrate
+        dbt parse \
+          --project-dir /opt/airflow/dbt \
+          --profiles-dir /opt/airflow/dbt \
+          --target-path /opt/airflow/dbt/target
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-dbt-target-init:
+        condition: service_completed_successfully
     restart: "no"
 
   # Replaces airflow-webserver from Airflow 2.x
@@ -172,4 +179,5 @@ services:
 
 volumes:
   airflow_postgres_data:
+  airflow_dbt_target:
   airflow_logs:

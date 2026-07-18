@@ -11,6 +11,10 @@ from pipeline_monitoring.observer import DatasetSnapshot
 
 ScalarQuery = Callable[[str], Any]
 _LOGGER = logging.getLogger(__name__)
+_SILVER_WATERMARK_COLUMNS = {
+    "transactions": "event_timestamp",
+    "fraud_cases": "reported_at",
+}
 
 
 def _safe_call(operation: Callable[[], Any], description: str) -> Any:
@@ -21,17 +25,38 @@ def _safe_call(operation: Callable[[], Any], description: str) -> Any:
         return None
 
 
+def latest_bronze_object_timestamp_ms(client: Any, dataset: str) -> int | None:
+    """Return the newest Bronze Parquet object's modification time."""
+    request: dict[str, Any] = {
+        "Bucket": os.environ.get("BRONZE_BUCKET", "bronze"),
+        "Prefix": f"cdc/{dataset}/",
+    }
+    latest_timestamp_ms: int | None = None
+    while True:
+        response = client.list_objects_v2(**request)
+        for item in response.get("Contents", []):
+            if not item["Key"].endswith(".parquet"):
+                continue
+            timestamp_ms = int(item["LastModified"].timestamp() * 1000)
+            latest_timestamp_ms = max(latest_timestamp_ms or timestamp_ms, timestamp_ms)
+        if not response.get("IsTruncated"):
+            return latest_timestamp_ms
+        request["ContinuationToken"] = response["NextContinuationToken"]
+
+
 class RuntimePipelineProbe:
     def __init__(
         self,
         *,
         kafka_latest: Callable[[str], int | None],
+        bronze_latest: Callable[[str], int | None],
         trino_scalar: ScalarQuery,
         clickhouse_scalar: ScalarQuery,
         connector_healthy: Callable[[str], bool],
         redis_healthy: Callable[[], bool],
     ) -> None:
         self.kafka_latest = kafka_latest
+        self.bronze_latest = bronze_latest
         self.trino_scalar = trino_scalar
         self.clickhouse_scalar = clickhouse_scalar
         self.connector_healthy = connector_healthy
@@ -45,21 +70,19 @@ class RuntimePipelineProbe:
                 lambda: self.kafka_latest(f"cdc.{dataset}"), f"{dataset} Kafka"
             ),
             bronze_watermark_ms=_safe_call(
-                lambda: self.trino_scalar(
-                    f"SELECT max(_cdc_ts_ms) FROM lakehouse.bronze.{dataset}"
-                ),
+                lambda: self.bronze_latest(dataset),
                 f"{dataset} Bronze",
             ),
             silver_watermark_s=_safe_call(
                 lambda: self.trino_scalar(
-                    "SELECT to_unixtime(max(_silver_updated_at)) "
+                    f"SELECT to_unixtime(max({_SILVER_WATERMARK_COLUMNS[dataset]})) "
                     f"FROM lakehouse.silver.{dataset}"
                 ),
                 f"{dataset} Silver",
             ),
             gold_watermark_s=_safe_call(
                 lambda: self.clickhouse_scalar(
-                    "SELECT toUnixTimestamp(max(feature_date)) "
+                    "SELECT toUnixTimestamp(max(event_timestamp)) "
                     "FROM gold.mart_fraud_ml_features"
                 ),
                 "Gold features",
@@ -110,6 +133,19 @@ def _clickhouse_scalar(query: str) -> Any:
         return None if not result else result[0]
     finally:
         client.close()
+
+
+def _bronze_latest_timestamp(dataset: str) -> int | None:
+    import boto3
+
+    client = boto3.client(
+        "s3",
+        endpoint_url=os.environ.get("MINIO_ENDPOINT", "http://minio:9000"),
+        aws_access_key_id=os.environ.get("MINIO_ACCESS_KEY", "minio"),
+        aws_secret_access_key=os.environ.get("MINIO_SECRET_KEY", "minio12345"),
+        region_name=os.environ.get("MINIO_REGION", "us-east-1"),
+    )
+    return latest_bronze_object_timestamp_ms(client, dataset)
 
 
 def _connector_healthy(connector: str) -> bool:
@@ -178,6 +214,7 @@ def _kafka_latest_timestamp(topic: str) -> int | None:
 def create_runtime_probe() -> RuntimePipelineProbe:
     return RuntimePipelineProbe(
         kafka_latest=_kafka_latest_timestamp,
+        bronze_latest=_bronze_latest_timestamp,
         trino_scalar=_trino_scalar,
         clickhouse_scalar=_clickhouse_scalar,
         connector_healthy=_connector_healthy,

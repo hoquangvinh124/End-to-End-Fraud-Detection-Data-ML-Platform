@@ -32,6 +32,7 @@ from cosmos import (
     ProjectConfig,
     RenderConfig,
 )
+from cosmos.constants import LoadMode
 from cosmos.profiles.trino.base import TrinoBaseProfileMapping
 from pipeline_readiness import cdc_freshness_ready
 
@@ -48,6 +49,14 @@ _MLFLOW_TRACKING_URI = os.environ.get(
     "MLFLOW_TRACKING_URI", "http://mlflow-server:5000"
 )
 _DBT_PROJECT_DIR = Path(os.environ.get("DBT_PROJECT_DIR", "/opt/airflow/dbt"))
+_FEATURE_DATE_TEMPLATE = (
+    "{{ (data_interval_end | default(dag_run.run_after, true))"
+    ".strftime('%Y-%m-%d') }}"
+)
+_TRAIN_START_DATE_TEMPLATE = (
+    "{{ macros.ds_add((data_interval_end | default(dag_run.run_after, true))"
+    ".strftime('%Y-%m-%d'), -90) }}"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +109,7 @@ def _dbt_task_group(
         group_id=group_id,
         project_config=ProjectConfig(
             dbt_project_path=_DBT_PROJECT_DIR,
+            manifest_path=_DBT_PROJECT_DIR / "target" / "manifest.json",
             project_name="fraud_detection",
         ),
         profile_config=ProfileConfig(
@@ -118,9 +128,12 @@ def _dbt_task_group(
         execution_config=ExecutionConfig(
             execution_mode=ExecutionMode.LOCAL,
         ),
-        render_config=RenderConfig(select=[select]),
+        render_config=RenderConfig(
+            select=[select],
+            load_method=LoadMode.DBT_MANIFEST,
+        ),
         operator_args={
-            "vars": {"feature_date": "{{ ds }}"},
+            "vars": {"feature_date": _FEATURE_DATE_TEMPLATE},
         },
     )
 
@@ -185,7 +198,7 @@ with DAG(
         command=(
             "bash -c 'cd /app/feature_store && PYTHONPATH=/app /app/.venv/bin/feast apply "
             "&& cd /app && python feature_store/materialize_to_redis.py "
-            "--feature-date {{ ds }}'"
+            f"--feature-date {_FEATURE_DATE_TEMPLATE}'"
         ),
         network_mode=_DOCKER_NETWORK,
         auto_remove="success",
@@ -206,7 +219,7 @@ with DAG(
         execution_timeout=timedelta(minutes=30),
         doc_md=(
             "Reads customer + terminal features from the ClickHouse Gold mart "
-            "for `{{ ds }}` and pushes to Redis via `feast write_to_online_store`."
+            "for the run date and pushes them to Redis via `feast write_to_online_store`."
         ),
     )
 
@@ -218,8 +231,8 @@ with DAG(
             "--clickhouse-host clickhouse "
             "--clickhouse-port 8123 "
             f"--tracking-uri {_MLFLOW_TRACKING_URI} "
-            "--start-date {{ macros.ds_add(ds, -90) }} "
-            "--end-date {{ ds }}"
+            f"--start-date {_TRAIN_START_DATE_TEMPLATE} "
+            f"--end-date {_FEATURE_DATE_TEMPLATE}"
         ),
         network_mode=_DOCKER_NETWORK,
         auto_remove="success",

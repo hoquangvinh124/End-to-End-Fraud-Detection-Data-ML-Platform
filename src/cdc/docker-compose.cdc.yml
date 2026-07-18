@@ -37,6 +37,7 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     healthcheck:
       test:
         [
@@ -79,7 +80,7 @@ services:
       retries: 10
 
   kafka-ui:
-    image: provectuslabs/kafka-ui
+    image: provectuslabs/kafka-ui@sha256:8f2ff02d64b0a7a2b71b6b3b3148b85f66d00ec20ad40c30bdcd415d46d31818
     container_name: kafka-ui
     ports:
       - "8080:8080"
@@ -138,7 +139,7 @@ services:
     restart: "no"
 
   debezium-ui:
-    image: quay.io/debezium/debezium-ui:latest
+    image: quay.io/debezium/debezium-ui@sha256:d35b90814de74fb1012eeade74e0edd9124a2d7602d8ff16b0d34c530fa02c40
     container_name: debezium-ui
     ports:
       - "8088:8080"

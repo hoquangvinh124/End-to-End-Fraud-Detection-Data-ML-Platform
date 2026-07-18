@@ -21,3 +21,14 @@ include:
   - src/orchestration/docker-compose.airflow.yml
   - src/mlflow/docker-compose.mlflow.yml
   - src/batch_processing/docker-compose.batch_processing.yml
+
+# Cross-stack readiness gates applied when the complete platform is started.
+services:
+  silver-transactions:
+    depends_on:
+      hive-metastore:
+        condition: service_healthy
+  silver-fraud-cases:
+    depends_on:
+      hive-metastore:
+        condition: service_healthy

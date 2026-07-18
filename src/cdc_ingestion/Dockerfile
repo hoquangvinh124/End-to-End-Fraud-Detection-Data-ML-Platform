@@ -3,6 +3,7 @@ FROM apache/spark:4.0.2-python3
 USER root
 
 RUN pip install --no-cache-dir \
+    confluent-kafka==2.15.0 \
     opentelemetry-sdk==1.41.0 \
     opentelemetry-exporter-otlp-proto-http==1.41.0
 

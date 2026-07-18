@@ -29,6 +29,7 @@ class PipelineStreamingQueryListener(StreamingQueryListener):
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
         self._stop_heartbeat = threading.Event()
         self._heartbeat_thread: threading.Thread | None = None
+        self._last_progress_gauges: dict[str, float] = {}
 
     @property
     def attributes(self) -> dict[str, str]:
@@ -43,6 +44,8 @@ class PipelineStreamingQueryListener(StreamingQueryListener):
         self.sink.set_gauge(
             "mlops.pipeline.heartbeat.time", self.clock(), self.attributes
         )
+        for name, value in self._last_progress_gauges.items():
+            self.sink.set_gauge(name, value, self.attributes)
 
     def onQueryStarted(self, event: Any) -> None:  # noqa: N802
         self._heartbeat()
@@ -59,34 +62,38 @@ class PipelineStreamingQueryListener(StreamingQueryListener):
 
     def onQueryProgress(self, event: Any) -> None:  # noqa: N802
         progress = event.progress
-        self._heartbeat()
         offsets_behind = 0.0
         for source in getattr(progress, "sources", []):
             metrics = getattr(source, "metrics", {}) or {}
             offsets_behind = max(
-                offsets_behind, float(metrics.get("maxOffsetsBehind", 0) or 0)
+                offsets_behind,
+                float(
+                    metrics.get(
+                        "maxOffsetsBehindLatest",
+                        metrics.get("maxOffsetsBehind", 0),
+                    )
+                    or 0
+                ),
             )
-        self.sink.set_gauge(
-            "mlops.pipeline.offsets.behind", offsets_behind, self.attributes
+        duration_ms = float(
+            (getattr(progress, "durationMs", {}) or {}).get("triggerExecution", 0)
+            or 0
         )
-        self.sink.set_gauge(
-            "mlops.pipeline.input.rate",
-            float(getattr(progress, "inputRowsPerSecond", 0) or 0),
-            self.attributes,
-        )
-        self.sink.set_gauge(
-            "mlops.pipeline.processing.rate",
-            float(getattr(progress, "processedRowsPerSecond", 0) or 0),
-            self.attributes,
-        )
+        self._last_progress_gauges = {
+            "mlops.pipeline.offsets.behind": offsets_behind,
+            "mlops.pipeline.input.rate": float(
+                getattr(progress, "inputRowsPerSecond", 0) or 0
+            ),
+            "mlops.pipeline.processing.rate": float(
+                getattr(progress, "processedRowsPerSecond", 0) or 0
+            ),
+            "mlops.pipeline.batch.duration.last": duration_ms / 1000.0,
+        }
+        self._heartbeat()
         self.sink.add_counter(
             "mlops.pipeline.records.processed",
             float(getattr(progress, "numInputRows", 0) or 0),
             self.attributes,
-        )
-        duration_ms = float(
-            (getattr(progress, "durationMs", {}) or {}).get("triggerExecution", 0)
-            or 0
         )
         self.sink.record_histogram(
             "mlops.pipeline.batch.duration", duration_ms / 1000.0, self.attributes

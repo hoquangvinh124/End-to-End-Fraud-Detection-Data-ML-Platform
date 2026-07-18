@@ -58,12 +58,16 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
+                "color": "red",
                 "value": null
               },
               {
-                "color": "red",
+                "color": "orange",
                 "value": 1
+              },
+              {
+                "color": "green",
+                "value": 10
               }
             ]
           },
@@ -99,13 +103,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\",exported_job=\"fraud-detection-api\"}[5m])) or vector(0)",
+          "expr": "max_over_time((sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\",exported_job=\"fraud-detection-api\",http_target=\"/predict-online\"}[1m])))[10m:15s]) or vector(0)",
           "legendFormat": "",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Total Request Rate",
+      "title": "Peak Online Prediction Rate (10m)",
       "type": "stat"
     },
     {
@@ -168,13 +172,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{job=\"otel-collector\",exported_job=\"fraud-detection-api\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_server_duration_milliseconds_bucket{job=\"otel-collector\",exported_job=\"fraud-detection-api\",http_target=\"/predict-online\"}[5m])))",
           "legendFormat": "",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Overall P95 Latency",
+      "title": "Online Prediction P95",
       "type": "stat"
     },
     {
@@ -239,13 +243,13 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "100 * ((sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\",exported_job=\"fraud-detection-api\",http_status_code=~\"5..\"}[5m])) or vector(0)) / clamp_min(sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\",exported_job=\"fraud-detection-api\"}[5m])), 1))",
+          "expr": "100 * ((sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\",exported_job=\"fraud-detection-api\",http_target=\"/predict-online\",http_status_code=~\"5..\"}[5m])) or vector(0)) / clamp_min(sum(rate(http_server_duration_milliseconds_count{job=\"otel-collector\",exported_job=\"fraud-detection-api\",http_target=\"/predict-online\"}[5m])), 1))",
           "legendFormat": "",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "5xx Rate",
+      "title": "Online Prediction 5xx Rate",
       "type": "stat"
     },
     {

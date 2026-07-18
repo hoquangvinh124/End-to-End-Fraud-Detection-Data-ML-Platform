@@ -32,6 +32,14 @@ class TestBuildSparkSession:
 
 
 class TestMain:
+    def test_recovers_when_a_persisted_checkpoint_references_an_old_topic_epoch(self):
+        source = (MODULE_DIR / "cdc_fraud_cases_to_bronze.py").read_text(
+            encoding="utf-8"
+        )
+        assert '.option("failOnDataLoss", "false")' in source
+        assert 'open("/tmp/cdc-stream-ready", "w")' in source
+        assert 'os.remove("/tmp/cdc-stream-ready")' in source
+
     def test_writes_parquet_not_delta(self):
         spark = MagicMock()
         raw_df = MagicMock()

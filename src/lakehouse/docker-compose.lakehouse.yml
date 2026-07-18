@@ -86,25 +86,52 @@ services:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/9083'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  trino-spill-init:
+    image: busybox:1.36
+    container_name: trino-spill-init
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 1000:1000 /mnt/trino-spill"]
+    volumes:
+      - trino_spill:/mnt/trino-spill
+    restart: "no"
 
   trino:
     image: trinodb/trino:481
     container_name: trino
     hostname: trino
+    restart: unless-stopped
     ports:
       - "8090:8080"
     volumes:
-      - ./trino/etc:/usr/lib/trino/etc:ro
+      - ./trino/etc/config.properties:/etc/trino/config.properties:ro
+      - ./trino/etc/jvm.config:/etc/trino/jvm.config:ro
+      - ./trino/etc/node.properties:/etc/trino/node.properties:ro
       - ./trino/catalog:/etc/trino/catalog:ro
       - trino_spill:/mnt/trino-spill
     depends_on:
+      trino-spill-init:
+        condition: service_completed_successfully
       hive-metastore:
         condition: service_started
       clickhouse:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "/usr/lib/trino/bin/health-check"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
 
   clickhouse:
-    image: clickhouse/clickhouse-server:head-distroless
+    # Immutable digest currently resolves to ClickHouse 26.6.1.496.
+    image: clickhouse/clickhouse-server@sha256:d534b01b07e51c192fb6300ca157331f88e815f174c47f7730f6870d4787a2a5
     container_name: clickhouse
     hostname: clickhouse
     ports:

@@ -10,7 +10,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"mappings": [{"options": {"0": {"color": "red", "text": "DOWN"}, "1": {"color": "green", "text": "UP"}}, "type": "value"}], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 0},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
       "id": 1,
       "options": {"colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"},
       "targets": [{"expr": "min(mlops_pipeline_component_up)", "refId": "A"}],
@@ -20,7 +20,7 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 0},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
       "id": 2,
       "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
       "targets": [{"expr": "max(mlops_pipeline_processing_delay{dataset=\"$dataset\",pipeline_stage=\"bronze\"})", "refId": "A"}],
@@ -30,27 +30,27 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 0},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
       "id": 3,
       "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
-      "targets": [{"expr": "max(mlops_pipeline_offsets_behind{dataset=\"$dataset\"})", "refId": "A"}],
+      "targets": [{"expr": "max(mlops_pipeline_offsets_behind{dataset=\"$dataset\"}) or max(last_over_time(mlops_pipeline_offsets_behind{dataset=\"$dataset\"}[24h])) or vector(0)", "refId": "A"}],
       "title": "CDC Offsets Behind",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 0},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
       "id": 4,
       "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
-      "targets": [{"expr": "sum(ALERTS{alertstate=\"firing\"})", "refId": "A"}],
+      "targets": [{"expr": "sum(ALERTS{alertstate=\"firing\"}) or vector(0)", "refId": "A"}],
       "title": "Active Alerts",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 5},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 8},
       "id": 5,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [{"expr": "mlops_pipeline_freshness{dataset=\"$dataset\"}", "legendFormat": "{{pipeline_stage}}", "refId": "A"}],
@@ -60,17 +60,17 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 5},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 8},
       "id": 6,
       "options": {"legend": {"calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
-      "targets": [{"expr": "histogram_quantile(0.95, sum by (le, dataset) (rate(mlops_pipeline_batch_duration_bucket[15m])))", "legendFormat": "{{dataset}} p95", "refId": "A"}],
-      "title": "Streaming Micro-batch Duration",
+      "targets": [{"expr": "mlops_pipeline_batch_duration_last{dataset=\"$dataset\",pipeline_stage=\"bronze\"}", "legendFormat": "{{dataset}} last", "refId": "A"}],
+      "title": "Streaming Micro-batch Duration (last)",
       "type": "timeseries"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 13},
+      "gridPos": {"h": 7, "w": 12, "x": 0, "y": 15},
       "id": 7,
       "options": {"legend": {"calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi", "sort": "desc"}},
       "targets": [
@@ -82,23 +82,63 @@
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {"unit": "dateTimeAsIso"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 13},
+      "gridPos": {"h": 7, "w": 12, "x": 12, "y": 15},
       "id": 8,
       "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
-      "targets": [{"expr": "mlops_pipeline_last_success_time{pipeline_stage=\"online\"} * 1000", "refId": "A"}],
+      "targets": [{"expr": "max_over_time(mlops_pipeline_last_success_time{pipeline_stage=\"online\"}[7d]) * 1000", "refId": "A"}],
       "title": "Last Feast → Redis Success",
       "type": "stat"
     },
     {
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 21},
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 22},
       "id": 9,
       "options": {"showHeader": true},
       "targets": [{"expr": "ALERTS{alertstate=\"firing\"}", "format": "table", "instant": true, "refId": "A"}],
       "title": "Firing Pipeline Alerts",
       "transformations": [{"id": "labelsToFields", "options": {}}],
       "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "rows/sec"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 4},
+      "id": 10,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "max(max_over_time(mlops_pipeline_input_rate{dataset=\"$dataset\",pipeline_stage=\"bronze\"}[30m])) or vector(0)", "refId": "A"}],
+      "title": "Peak CDC Input Rate (30m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "rows/sec"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 6, "y": 4},
+      "id": 11,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "max(max_over_time(mlops_pipeline_processing_rate{dataset=\"$dataset\",pipeline_stage=\"bronze\"}[30m])) or vector(0)", "refId": "A"}],
+      "title": "Peak Spark Processing Rate (30m)",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]}, "unit": "short"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 4},
+      "id": 12,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "sum(mlops_pipeline_records_processed_total{dataset=\"$dataset\",pipeline_stage=\"bronze\"}) or vector(0)", "refId": "A"}],
+      "title": "Bronze Records Processed",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "fieldConfig": {"defaults": {"color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 60}, {"color": "red", "value": 300}]}, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 4},
+      "id": 13,
+      "options": {"colorMode": "value", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}},
+      "targets": [{"expr": "max(mlops_pipeline_batch_duration_last{dataset=\"$dataset\",pipeline_stage=\"bronze\"}) or max(last_over_time(mlops_pipeline_batch_duration_last{dataset=\"$dataset\",pipeline_stage=\"bronze\"}[24h])) or vector(0)", "refId": "A"}],
+      "title": "Last Micro-batch Duration",
+      "type": "stat"
     }
   ],
   "refresh": "30s",
@@ -130,6 +170,6 @@
   "timezone": "utc",
   "title": "Lakehouse Pipeline Overview",
   "uid": "lakehouse-pipeline-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }

@@ -15,7 +15,7 @@ def test_e2e_demo_covers_every_persistent_boundary() -> None:
         "http://localhost:5000/health",
         "http://localhost:8000/health",
         "http://localhost:8000/predict-online",
-        "2026-07-11",
+        '(Get-Date).ToString("yyyy-MM-dd")',
     ]
     for marker in required_markers:
         assert marker in source

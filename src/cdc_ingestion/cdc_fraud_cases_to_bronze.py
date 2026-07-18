@@ -25,6 +25,8 @@ Job parameters live under the ``spark.bronze.fraud_cases.*`` namespace.
 """
 from __future__ import annotations
 
+import os
+
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.avro.functions import from_avro
@@ -95,6 +97,7 @@ def main() -> None:
         .option("kafka.bootstrap.servers", bootstrap_servers)
         .option("subscribe", topic)
         .option("startingOffsets", "earliest")
+        .option("failOnDataLoss", "false")
         .load()
     )
 
@@ -108,7 +111,14 @@ def main() -> None:
         .start(output_path)
     )
 
-    query.awaitTermination()
+    with open("/tmp/cdc-stream-ready", "w"):
+        pass
+
+    try:
+        query.awaitTermination()
+    finally:
+        if os.path.exists("/tmp/cdc-stream-ready"):
+            os.remove("/tmp/cdc-stream-ready")
 
 
 if __name__ == "__main__":

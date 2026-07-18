@@ -23,7 +23,6 @@ The repository demonstrates two connected engineering systems:
 - [Service Endpoints](#service-endpoints)
 - [Inference API](#inference-api)
 - [Automated Verification](#automated-verification)
-- [Demo Video](#demo-video)
 - [CI and Container Delivery](#ci-and-container-delivery)
 - [Current Scope and Roadmap](#current-scope-and-roadmap)
 - [Configuration and Security](#configuration-and-security)
@@ -43,23 +42,21 @@ The repository demonstrates two connected engineering systems:
 
 ## Verified Demo Snapshot
 
-The values below come from the last successful local end-to-end run on **2026-07-11**. They are reproducible evidence from that run, not fixed dataset guarantees.
+The values below come from the last successful local end-to-end run on **2026-07-18**. They are reproducible evidence from that run, not fixed dataset guarantees.
 
 | Check | Last verified result |
 | --- | ---: |
-| PostgreSQL OLTP transactions | 4,477,440 rows through 2026-07-11 |
-| ClickHouse Gold feature mart | 36,515 rows through 2026-07-11 |
-| Gold transaction ID uniqueness | 36,515 / 36,515 unique |
-| Redis online store | 10,275 keys |
+| PostgreSQL OLTP transactions | 4,484,138 rows through 2026-07-18 |
+| ClickHouse Gold feature mart | 37,459 rows through 2026-07-18 |
+| Gold transaction ID uniqueness | 37,459 / 37,459 unique |
+| Redis online store | 3,258 keys |
 | Promoted MLflow model | `fraud-detection:champion` -> version 2 |
 | dbt validation | 52 / 52 checks passed |
-| Python test suite | 122 tests passed |
+| Python test suite | 131 tests passed |
 | API coverage | 87.98% (CI gate: 80%) |
 | Online prediction | Valid probability returned from `/predict-online` |
 
-> **E2E result screenshot placeholder**
->
-> Capture the PowerShell output from a successful `scripts/e2e_demo.ps1` run, including row counts, Redis keys, model version, probability, and `result: PASS`. Hide usernames, tokens, and unrelated terminal history. Save it as `docs/assets/e2e-result.png`, then replace this callout with `![Successful end-to-end verification](docs/assets/e2e-result.png)`.
+![Successful end-to-end verification](docs/assets/e2e-result.png)
 
 ## Local Performance Snapshot
 
@@ -115,29 +112,21 @@ CDC freshness gate -> Bronze-to-Silver merge -> dbt staging -> dbt intermediate
 -> dbt Gold mart -> Feast/Redis materialization -> train/register MLflow model
 ```
 
-> **Airflow screenshot placeholder**
->
-> Capture the `feature_pipeline_daily` Graph view after a successful run. Show task groups, green task states, logical date, and total duration. Hide login details and URLs containing tokens. Save it as `docs/assets/airflow-dag.png`, then replace this callout with `![Successful Airflow feature and model pipeline](docs/assets/airflow-dag.png)`.
+![Successful Airflow feature and model pipeline](docs/assets/airflow-dag.png)
 
 ### Model Lifecycle
 
 Training reads a bounded chronological window from `gold.mart_fraud_ml_features`, uses a reproducible stratified split, logs metrics and artifacts to MLflow, exports an ONNX model, creates a Registry version, and moves the `champion` alias to the new version. The API resolves that alias on startup and prefers ONNX Runtime for inference.
 
-> **MLflow screenshot placeholder**
->
-> Capture the `fraud-detection` registered model page with the `champion` alias, model version, relevant metrics, and ONNX artifact visible. Hide storage credentials and signed URLs. Save it as `docs/assets/mlflow-registry.png`, then replace this callout with `![MLflow model promoted with the champion alias](docs/assets/mlflow-registry.png)`.
+![MLflow model promoted with the champion alias](docs/assets/mlflow-registry.png)
 
 ### Observability
 
 OpenTelemetry instruments both the inference API and data pipeline. The Lakehouse dashboard covers CDC throughput, offset backlog, micro-batch duration, layer freshness, component health, Airflow task duration, and active alerts. The API dashboard covers request rate, p95 latency, HTTP errors, process resources, logs, and traces. Prometheus evaluates alert rules, Alertmanager optionally delivers firing and resolved incidents to Discord, Loki stores logs, and Jaeger exposes distributed traces.
 
-> **Grafana screenshot placeholder**
->
-> Capture a representative inference window showing request rate, p95 latency, error rate, and resource usage. Use a readable time range and hide local credentials. Save it as `docs/assets/grafana-dashboard.png`, then replace this callout with `![Fraud inference observability dashboard](docs/assets/grafana-dashboard.png)`.
+![Fraud inference observability dashboard](docs/assets/grafana-dashboard.png)
 
-> **Lakehouse monitoring screenshot placeholder**
->
-> Capture the `Lakehouse Pipeline Overview` dashboard with healthy components, both datasets selected, visible freshness and micro-batch panels, and no sensitive labels. Save it as `docs/assets/lakehouse-pipeline-dashboard.png`, then replace this callout with `![Lakehouse pipeline observability dashboard](docs/assets/lakehouse-pipeline-dashboard.png)`.
+![Lakehouse pipeline observability dashboard](docs/assets/lakehouse-pipeline-dashboard.png)
 
 ## Repository Structure
 
@@ -184,12 +173,22 @@ Create a local configuration file, validate Compose, and start the platform:
 
 ```powershell
 Copy-Item .env.example .env
-docker compose config --quiet
-docker compose up -d
+.\scripts\start_stack.ps1
 docker compose ps
 ```
 
-The master Compose file includes the OLTP, CDC, lakehouse, feature store, MLflow, API, Airflow, batch processing, and observability sub-stacks. Initial builds and health checks can take several minutes.
+After the local images have been built once, use the cached cold-start path:
+
+```powershell
+.\scripts\start_stack.ps1 -SkipBuild
+```
+
+The startup script validates Docker and Compose, builds cached local images,
+waits for every required service, runs HTTP smoke checks, and prints focused
+container logs when a service fails. The Silver batch image is built during
+startup, while the batch jobs themselves run only through Airflow or the
+explicit `batch` profile. Initial builds and health checks can take several
+minutes.
 
 Stop the stack while preserving data:
 
@@ -218,7 +217,6 @@ To rebuild from seed data:
 uv sync --frozen --group dev
 uv run python src/scripts/load_oltp_seed.py --data-dir data
 uv run python src/scripts/generate_current_oltp_data.py `
-  --end-date 2026-07-11 `
   --daily-scale 0.10
 ```
 
@@ -256,7 +254,7 @@ $body = @{
   customer_id = 1
   terminal_id = 42
   TX_AMOUNT = 150.50
-  TX_DATETIME = "2026-07-11T12:30:00Z"
+  TX_DATETIME = "2026-07-18T12:30:00Z"
 } | ConvertTo-Json
 
 Invoke-RestMethod `
@@ -291,7 +289,7 @@ Set-Location ../..
 Verify PostgreSQL, ClickHouse, Redis, MLflow, the loaded model, and online inference together:
 
 ```powershell
-.\scripts\e2e_demo.ps1 -ExpectedDate "2026-07-11"
+.\scripts\e2e_demo.ps1
 ```
 
 Reproduce the local Silver/Gold query comparison and online inference load test:
@@ -299,12 +297,6 @@ Reproduce the local Silver/Gold query comparison and online inference load test:
 ```powershell
 uv run python scripts/benchmark_portfolio.py --expected-date 2026-07-11
 ```
-
-## Demo Video
-
-> **Demo video placeholder**
->
-> Record a 3-5 minute walkthrough covering the architecture, successful Airflow DAG, MLflow `champion` model, online API prediction, Grafana dashboard, and final E2E output. Hide credentials and local notifications. Upload it to YouTube, optionally save a thumbnail as `docs/assets/demo-thumbnail.png`, then replace this callout with `[![Platform demo](docs/assets/demo-thumbnail.png)](YOUR_YOUTUBE_URL)`. If no custom thumbnail is used, link it as `[Watch the platform demo](YOUR_YOUTUBE_URL)`.
 
 ## CI and Container Delivery
 

@@ -1,5 +1,5 @@
 param(
-    [string]$ExpectedDate = "2026-07-11"
+    [string]$ExpectedDate = (Get-Date).ToString("yyyy-MM-dd")
 )
 
 $ErrorActionPreference = "Stop"

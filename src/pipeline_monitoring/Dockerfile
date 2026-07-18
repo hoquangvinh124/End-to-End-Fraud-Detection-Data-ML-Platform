@@ -3,6 +3,7 @@ FROM python:3.11-slim
 WORKDIR /opt/app
 
 RUN pip install --no-cache-dir \
+    boto3==1.34.0 \
     clickhouse-connect==0.15.1 \
     confluent-kafka==2.12.2 \
     opentelemetry-sdk==1.41.0 \

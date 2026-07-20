@@ -11,7 +11,6 @@ An end-to-end data and MLOps platform for processing banking transactions, produ
 
 - [Core Capabilities](#core-capabilities)
 - [System Architecture](#system-architecture)
-- [Platform Evidence](#platform-evidence)
 - [Repository Structure](#repository-structure)
 - [Getting Started](#getting-started)
 - [Service URLs](#service-urls)
@@ -55,34 +54,6 @@ OpenTelemetry routes metrics, logs, and traces to the observability stack.
 ```
 
 <!-- Add docs/assets/architecture-overview.png here when the final diagram is ready. -->
-
-## Platform Evidence
-
-### End-to-End Data Flow
-
-The verification flow checks PostgreSQL, ClickHouse Gold, Redis, MLflow model resolution, and online inference across the running platform.
-
-![Successful end-to-end platform verification](docs/assets/e2e-result.png)
-
-### Airflow Orchestration
-
-The `feature_pipeline_daily` DAG gates execution on CDC freshness before running Silver processing, dbt transformations, Feast materialization, and model training.
-
-![Successful Airflow feature and model pipeline](docs/assets/airflow-dag.png)
-
-### Model Registry
-
-Training logs metrics and ONNX artifacts to MLflow, creates a registered model version, and assigns the `champion` alias used by the inference service.
-
-![MLflow model promoted with the champion alias](docs/assets/mlflow-registry.png)
-
-### Observability
-
-The API dashboard tracks request rate, p95 latency, errors, and runtime health. The lakehouse dashboard tracks CDC throughput, backlog, Spark micro-batches, layer freshness, and service availability.
-
-![Fraud inference observability dashboard](docs/assets/grafana-dashboard.png)
-
-![Lakehouse pipeline observability dashboard](docs/assets/lakehouse-pipeline-dashboard.png)
 
 ## Repository Structure
 

@@ -27,6 +27,7 @@ env.*
 .coverage
 .coverage.*
 htmlcov/
+.artifacts/
 
 docs/superpowers/
 

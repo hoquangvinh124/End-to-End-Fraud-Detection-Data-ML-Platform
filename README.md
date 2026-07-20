@@ -52,7 +52,7 @@ The values below come from the last successful local end-to-end run on **2026-07
 | Redis online store | 3,258 keys |
 | Promoted MLflow model | `fraud-detection:champion` -> version 2 |
 | dbt validation | 52 / 52 checks passed |
-| Python test suite | 131 tests passed |
+| Python test suite | 144 tests passed |
 | API coverage | 87.98% (CI gate: 80%) |
 | Online prediction | Valid probability returned from `/predict-online` |
 
@@ -67,7 +67,7 @@ The results below were measured on **2026-07-14** using Docker Desktop on a Wind
 | Analyst daily aggregate | Equivalent 962-row result, 10 warm-ups and 100 measured queries per path | Gold serving path p95 **54.77 ms** vs. Silver query path p95 **3,366.07 ms** (**98.4% lower latency**) |
 | Online fraud inference | 100 warm-ups, then 3 runs of 1,000 `/predict-online` requests at concurrency 10 | Median p95 **211.58 ms**, **71.17 requests/second**, **0% errors** |
 
-The query benchmark verifies matching row count, unique transaction count, and average amount. It measures an end-to-end Silver query path against a purpose-built Gold serving path, not an isolated Trino-versus-ClickHouse engine comparison. The online benchmark includes Feast/Redis feature retrieval and ONNX Runtime inference through FastAPI. The complete machine-readable evidence is in [`docs/performance-snapshot.json`](docs/performance-snapshot.json).
+The query benchmark verifies matching row count, unique transaction count, and average amount. It measures an end-to-end Silver query path against a purpose-built Gold serving path, not an isolated Trino-versus-ClickHouse engine comparison. The online benchmark includes Feast/Redis feature retrieval and ONNX Runtime inference through FastAPI.
 
 ## High-Level System Architecture
 

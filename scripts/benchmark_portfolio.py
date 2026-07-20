@@ -262,7 +262,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--api-runs", type=int, default=3)
     parser.add_argument("--timeout-seconds", type=float, default=30)
     parser.add_argument(
-        "--output", type=Path, default=Path("docs/performance-snapshot.json")
+        "--output", type=Path, default=Path(".artifacts/performance-snapshot.json")
     )
     return parser.parse_args()
 

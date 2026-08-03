@@ -22,7 +22,7 @@ An end-to-end data and MLOps platform for processing banking transactions, produ
 
 ## Risk Analyst Dashboard
 
-The Power BI risk dashboard connects to the ClickHouse transaction feature mart and gives the banking Risk Analyst team one prioritisation view: **where, when, and how severe fraud is**.
+The Power BI risk dashboard connects to the ClickHouse mart and gives the banking Risk Analyst team in bank ABC one prioritisation view: **where, when, and how severe fraud is**.
 
 - **Where:** Top Risk Terminals and customer-level amount deviations identify terminals and customers that need investigation first.
 - **When:** the Fraud Trend Over Time chart reveals peaks and changes in daily fraud activity.

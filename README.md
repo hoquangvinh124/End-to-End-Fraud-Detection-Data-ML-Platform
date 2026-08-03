@@ -20,6 +20,16 @@ An end-to-end data and MLOps platform for processing banking transactions, produ
 - [Development](#development)
 - [CI and Container Delivery](#ci-and-container-delivery)
 
+## Risk Analyst Dashboard
+
+The Power BI risk dashboard connects to the ClickHouse transaction feature mart and gives the banking Risk Analyst team one prioritisation view: **where, when, and how severe fraud is**.
+
+- **Where:** Top Risk Terminals and customer-level amount deviations identify terminals and customers that need investigation first.
+- **When:** the Fraud Trend Over Time chart reveals peaks and changes in daily fraud activity.
+- **How severe:** transaction volume, fraud count, fraud rate, and total fraud amount quantify the exposure and support escalation decisions.
+
+![Power BI fraud risk dashboard](docs/assets/power-bi-fraud-risk-dashboard.png)
+
 ## Core Capabilities
 
 - Captures PostgreSQL banking changes through Debezium, Kafka, and Schema Registry.
@@ -78,16 +88,6 @@ The API dashboard tracks request rate, p95 latency, errors, and runtime health. 
 ![Fraud inference observability dashboard](docs/assets/grafana-dashboard.png)
 
 ![Lakehouse pipeline observability dashboard](docs/assets/lakehouse-pipeline-dashboard.png)
-
-## Risk Analyst Dashboard
-
-The Power BI risk dashboard connects to the ClickHouse transaction feature mart and gives the banking Risk Analyst team one prioritisation view: **where, when, and how severe fraud is**.
-
-- **Where:** Top Risk Terminals and customer-level amount deviations identify terminals and customers that need investigation first.
-- **When:** the Fraud Trend Over Time chart reveals peaks and changes in daily fraud activity.
-- **How severe:** transaction volume, fraud count, fraud rate, and total fraud amount quantify the exposure and support escalation decisions.
-
-![Power BI fraud risk dashboard](docs/assets/power-bi-fraud-risk-dashboard.png)
 
 ## Repository Structure
 

@@ -43,29 +43,7 @@ The Power BI risk dashboard connects to the ClickHouse mart and gives the bankin
 
 ## System Architecture
 
-```text
-PostgreSQL OLTP
-      |
-      | Debezium CDC
-      v
-Kafka + Schema Registry
-      |
-      | Spark Structured Streaming
-      v
-Bronze Delta Lake -> Silver Delta Lake -> Trino + dbt -> ClickHouse Gold
-                                                        |             |
-                                              Feast materialization  Training
-                                                        |             |
-                                                        v             v
-                                                      Redis     MLflow Registry
-                                                        |       champion alias
-                                                        +-----> FastAPI + ONNX
-
-Airflow orchestrates batch feature and model workflows.
-OpenTelemetry routes metrics, logs, and traces to the observability stack.
-```
-
-<!-- Add docs/assets/architecture-overview.png here when the final diagram is ready. -->
+![End-to-end platform architecture](docs/assets/architecture-overview.png)
 
 ## Platform Evidence
 

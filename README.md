@@ -7,6 +7,10 @@
 
 An end-to-end data and MLOps platform for processing banking transactions, producing fraud features, managing model versions, and serving online predictions. The project connects an event-driven lakehouse with a reproducible ML lifecycle in one Docker Compose environment.
 
+## System Architecture
+
+![End-to-end platform architecture](docs/assets/architecture-overview.png)
+
 ## Table of Contents
 
 - [Core Capabilities](#core-capabilities)
@@ -40,32 +44,6 @@ The Power BI risk dashboard connects to the ClickHouse mart and gives the bankin
 - Serves online fraud predictions through FastAPI and ONNX Runtime.
 - Orchestrates feature materialization and model training with Airflow.
 - Exposes pipeline and API telemetry through OpenTelemetry, Prometheus, Grafana, Loki, and Jaeger.
-
-## System Architecture
-
-```text
-PostgreSQL OLTP
-      |
-      | Debezium CDC
-      v
-Kafka + Schema Registry
-      |
-      | Spark Structured Streaming
-      v
-Bronze Delta Lake -> Silver Delta Lake -> Trino + dbt -> ClickHouse Gold
-                                                        |             |
-                                              Feast materialization  Training
-                                                        |             |
-                                                        v             v
-                                                      Redis     MLflow Registry
-                                                        |       champion alias
-                                                        +-----> FastAPI + ONNX
-
-Airflow orchestrates batch feature and model workflows.
-OpenTelemetry routes metrics, logs, and traces to the observability stack.
-```
-
-<!-- Add docs/assets/architecture-overview.png here when the final diagram is ready. -->
 
 ## Platform Evidence
 
